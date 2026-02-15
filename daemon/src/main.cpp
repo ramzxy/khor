@@ -5,13 +5,20 @@
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
+#include <filesystem>
+#include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "httplib.h"
 
+#include "app/config.h"
 #include "khor/audio.h"
 #include "khor/metrics.h"
+#include "util/json.h"
+#include "util/paths.h"
 #include "../bpf/khor.h"
 
 #if defined(KHOR_HAS_BPF)
@@ -20,6 +27,106 @@
 #endif
 
 namespace {
+
+static int64_t unix_ms_now() {
+  using clock = std::chrono::system_clock;
+  return std::chrono::duration_cast<std::chrono::milliseconds>(clock::now().time_since_epoch()).count();
+}
+
+static void print_help(const char* argv0) {
+  std::fprintf(stderr,
+    "khor-daemon\\n"
+    "\\n"
+    "Usage:\\n"
+    "  %s [options]\\n"
+    "\\n"
+    "Options:\\n"
+    "  --help, -h                Show this help\\n"
+    "  --config PATH             Config file path (default: XDG config path)\\n"
+    "  --listen HOST:PORT        Override listen address\\n"
+    "  --ui-dir PATH             Serve UI from this directory (static)\\n"
+    "  --no-bpf                  Disable eBPF collector\\n"
+    "  --no-audio                Disable audio output\\n"
+    "  --midi                    Enable MIDI output (optional)\\n"
+    "  --osc                     Enable OSC output (optional)\\n"
+    "  --fake                    Enable fake metrics mode when BPF is unavailable\\n"
+    "\\n",
+    argv0 ? argv0 : "khor-daemon"
+  );
+}
+
+static bool parse_listen(const std::string& s, std::string* host, int* port) {
+  auto pos = s.rfind(':');
+  if (pos == std::string::npos) return false;
+  std::string h = s.substr(0, pos);
+  std::string p = s.substr(pos + 1);
+  if (h.empty() || p.empty()) return false;
+  char* endp = nullptr;
+  long v = std::strtol(p.c_str(), &endp, 10);
+  if (!endp || *endp != 0) return false;
+  if (v < 1 || v > 65535) return false;
+  *host = std::move(h);
+  *port = (int)v;
+  return true;
+}
+
+struct Cli {
+  bool help = false;
+  std::string config_path;
+
+  std::optional<std::string> listen;
+  std::optional<std::string> ui_dir;
+
+  std::optional<bool> enable_bpf;
+  std::optional<bool> enable_audio;
+  std::optional<bool> enable_midi;
+  std::optional<bool> enable_osc;
+  std::optional<bool> enable_fake;
+};
+
+static bool parse_args(int argc, char** argv, Cli* out, std::string* err) {
+  if (!out) return false;
+  for (int i = 1; i < argc; i++) {
+    std::string a = argv[i] ? argv[i] : "";
+    if (a == "--help" || a == "-h") {
+      out->help = true;
+      return true;
+    }
+    if (a == "--config") {
+      if (i + 1 >= argc) {
+        if (err) *err = "--config requires a path";
+        return false;
+      }
+      out->config_path = argv[++i];
+      continue;
+    }
+    if (a == "--listen") {
+      if (i + 1 >= argc) {
+        if (err) *err = "--listen requires HOST:PORT";
+        return false;
+      }
+      out->listen = std::string(argv[++i]);
+      continue;
+    }
+    if (a == "--ui-dir") {
+      if (i + 1 >= argc) {
+        if (err) *err = "--ui-dir requires a path";
+        return false;
+      }
+      out->ui_dir = std::string(argv[++i]);
+      continue;
+    }
+    if (a == "--no-bpf") { out->enable_bpf = false; continue; }
+    if (a == "--no-audio") { out->enable_audio = false; continue; }
+    if (a == "--midi") { out->enable_midi = true; continue; }
+    if (a == "--osc") { out->enable_osc = true; continue; }
+    if (a == "--fake") { out->enable_fake = true; continue; }
+
+    if (err) *err = "unknown argument: " + a;
+    return false;
+  }
+  return true;
+}
 
 // D minor pentatonic: D F G A C (safe default).
 constexpr int kScale[5] = {0, 3, 5, 7, 10};
@@ -39,6 +146,24 @@ int main(int argc, char** argv) {
   (void)argv;
 
   KhorMetrics metrics;
+
+  struct Cleanup {
+    std::atomic<bool>* running{};
+    std::thread* music{};
+    std::thread* http_thread{};
+    httplib::Server* http{};
+    KhorAudio* audio{};
+    ~Cleanup() {
+      if (running) running->store(false);
+      if (http) http->stop();
+      if (music && music->joinable()) music->join();
+      if (http_thread && http_thread->joinable()) http_thread->join();
+      if (audio) {
+        khor_audio_stop(audio);
+        khor_audio_destroy(audio);
+      }
+    }
+  };
 
   // Start audio.
   KhorAudio* audio = khor_audio_create();
@@ -102,55 +227,6 @@ int main(int argc, char** argv) {
     }
   });
 
-#if defined(KHOR_HAS_BPF)
-  libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
-  libbpf_set_print([](enum libbpf_print_level, const char*, va_list) { return 0; });
-
-  khor_bpf* skel = khor_bpf__open();
-  if (!skel) {
-    std::fprintf(stderr, "failed to open BPF skeleton\n");
-    return 1;
-  }
-  if (khor_bpf__load(skel)) {
-    std::fprintf(stderr, "failed to load BPF skeleton (need root/CAP_BPF)\n");
-    return 1;
-  }
-  if (khor_bpf__attach(skel)) {
-    std::fprintf(stderr, "failed to attach BPF programs\n");
-    return 1;
-  }
-
-  auto on_event = [](void* ctx, void* data, size_t) -> int {
-    auto* m = (KhorMetrics*)ctx;
-    auto* e = (const khor_event*)data;
-    m->events_total.fetch_add(1);
-    switch (e->type) {
-      case KHOR_EV_EXEC: m->exec_total.fetch_add(1); break;
-      case KHOR_EV_NET_RX: m->net_rx_bytes_total.fetch_add(e->a); break;
-      case KHOR_EV_NET_TX: m->net_tx_bytes_total.fetch_add(e->a); break;
-      default: break;
-    }
-    return 0;
-  };
-
-  ring_buffer* rb = ring_buffer__new(bpf_map__fd(skel->maps.events), on_event, &metrics, nullptr);
-  if (!rb) {
-    std::fprintf(stderr, "failed to create ring buffer\n");
-    return 1;
-  }
-#else
-  // No-BPF mode: cheap fake stimulus so audio + UI can be tested anywhere.
-  std::thread fake([&]{
-    while (running.load()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(250));
-      metrics.exec_total.fetch_add(1);
-      metrics.net_rx_bytes_total.fetch_add(1000 + (std::rand() % 60000));
-      metrics.net_tx_bytes_total.fetch_add(1000 + (std::rand() % 40000));
-    }
-  });
-  fake.detach();
-#endif
-
   // HTTP API for UI.
   httplib::Server http;
   auto cors = [](httplib::Response& res) {
@@ -197,29 +273,113 @@ int main(int argc, char** argv) {
     res.set_content("{\"ok\":true}\n", "application/json");
   });
 
+  http.Post("/test/note", [&](const httplib::Request& req, httplib::Response& res) {
+    cors(res);
+    int midi = 62;
+    float vel = 0.7f;
+    double dur = 0.25;
+    if (req.has_param("midi")) midi = std::atoi(req.get_param_value("midi").c_str());
+    if (req.has_param("vel")) vel = (float)std::atof(req.get_param_value("vel").c_str());
+    if (req.has_param("dur")) dur = std::atof(req.get_param_value("dur").c_str());
+    khor_audio_note_on(audio, midi, vel, dur);
+    res.set_content("{\"ok\":true}\n", "application/json");
+  });
+
   std::thread http_thread([&]{
+    std::fprintf(stderr, "khor-daemon: listening on http://127.0.0.1:17321\n");
     http.listen("127.0.0.1", 17321);
   });
 
-  // Main loop: poll ringbuf (if enabled).
-  while (running.load() && !g_stop) {
+  Cleanup cleanup{&running, &music, &http_thread, &http, audio};
+
+  bool use_bpf = false;
 #if defined(KHOR_HAS_BPF)
-    int err = ring_buffer__poll(rb, 50 /* ms */);
-    if (err < 0) {
-      metrics.events_dropped.fetch_add(1);
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  ring_buffer* rb = nullptr;
+  khor_bpf* skel = nullptr;
+
+  libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
+  const bool debug_libbpf = (std::getenv("KHOR_DEBUG_LIBBPF") != nullptr);
+  if (debug_libbpf) {
+    libbpf_set_print([](enum libbpf_print_level, const char* fmt, va_list args) {
+      return std::vfprintf(stderr, fmt, args);
+    });
+  } else {
+    // Keep stderr clean by default, but still allow opt-in diagnostics.
+    libbpf_set_print([](enum libbpf_print_level, const char*, va_list) { return 0; });
+  }
+
+  skel = khor_bpf__open();
+  if (!skel) {
+    std::fprintf(stderr, "failed to open BPF skeleton\n");
+  } else if (khor_bpf__load(skel)) {
+    std::fprintf(stderr, "failed to load BPF skeleton (need root/CAP_BPF)\n");
+  } else if (khor_bpf__attach(skel)) {
+    std::fprintf(stderr, "failed to attach BPF programs\n");
+  } else {
+    auto on_event = [](void* ctx, void* data, size_t) -> int {
+      auto* m = (KhorMetrics*)ctx;
+      auto* e = (const khor_event*)data;
+      m->events_total.fetch_add(1);
+      switch (e->type) {
+        case KHOR_EV_EXEC: m->exec_total.fetch_add(1); break;
+        case KHOR_EV_NET_RX: m->net_rx_bytes_total.fetch_add(e->a); break;
+        case KHOR_EV_NET_TX: m->net_tx_bytes_total.fetch_add(e->a); break;
+        default: break;
+      }
+      return 0;
+    };
+
+    rb = ring_buffer__new(bpf_map__fd(skel->maps.events), on_event, &metrics, nullptr);
+    if (!rb) {
+      std::fprintf(stderr, "failed to create ring buffer\n");
+    } else {
+      use_bpf = true;
+      std::fprintf(stderr, "khor-daemon: eBPF enabled\n");
     }
-#else
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+
+  if (!use_bpf) {
+    if (skel) khor_bpf__destroy(skel);
+    skel = nullptr;
+  }
 #endif
+
+  if (!use_bpf) {
+    std::fprintf(stderr, "khor-daemon: continuing without eBPF (fake metrics mode)\n");
+    std::thread fake([&]{
+      while (running.load() && !g_stop) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        metrics.exec_total.fetch_add(1);
+        metrics.net_rx_bytes_total.fetch_add(1000 + (std::rand() % 60000));
+        metrics.net_tx_bytes_total.fetch_add(1000 + (std::rand() % 40000));
+      }
+    });
+    fake.detach();
+  }
+
+  while (running.load() && !g_stop) {
+    if (use_bpf) {
+#if defined(KHOR_HAS_BPF)
+      int err = ring_buffer__poll(rb, 50 /* ms */);
+      if (err < 0) {
+        metrics.events_dropped.fetch_add(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+#else
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+#endif
+    } else {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
   }
 
   running.store(false);
-  music.join();
-  http.stop();
-  http_thread.join();
 
-  khor_audio_stop(audio);
-  khor_audio_destroy(audio);
+#if defined(KHOR_HAS_BPF)
+  if (use_bpf) {
+    ring_buffer__free(rb);
+    khor_bpf__destroy(skel);
+  }
+#endif
   return 0;
 }

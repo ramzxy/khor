@@ -2,27 +2,19 @@
 
 Sonify kernel activity using eBPF: stream structured kernel/network events into a musical engine and play audio directly, with a local React UI for visualization and live control.
 
-## Dev Environment (WSL2)
+## Dev Environment (Linux)
 
 This project is designed for Linux. WSL2 is fine for development as long as your WSL kernel has eBPF + BTF enabled.
 
-If you don’t have a distro installed yet:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
 ### 1) Check eBPF Support
 
-Run in WSL:
-
 ```bash
-./scripts/wsl-check.sh
+./scripts/linux-check.sh
 ```
 
-### 2) Install Build Dependencies (WSL)
+### 2) Install Build Dependencies
 
-On Ubuntu/Debian (WSL):
+On Ubuntu/Debian:
 
 ```bash
 sudo apt-get update
@@ -31,24 +23,44 @@ sudo apt-get install -y \
   libasound2-dev
 ```
 
+On Fedora:
+```bash
+sudo dnf install -y \
+  gcc gcc-c++ make cmake pkgconf-pkg-config clang llvm bpftool libbpf-devel
+```
+
 Notes:
 - `bpftool` is used to generate `vmlinux.h` and the libbpf skeleton header at build time.
 - `libasound2-dev` is only needed if you later switch to ALSA directly. The current MVP uses miniaudio (downloaded by script).
+- If you see ALSA "Permission denied" errors, ensure your user can access `/dev/snd/*` (common fix: `sudo usermod -aG audio $USER` then restart your session/WSL).
+- If you want eBPF without running as root, try: `sudo setcap cap_bpf,cap_perfmon+ep daemon/build/khor-daemon` (use `KHOR_DEBUG_LIBBPF=1` for verbose libbpf errors).
 
-### 3) Fetch Single-Header Deps (WSL)
+### 3) Fetch Single-Header Deps
 
 ```bash
 ./scripts/fetch_deps.sh
 ```
 
-### 4) Build + Run (WSL)
+### 4) Build + Run
 
 ```bash
-./scripts/wsl-build.sh
-./scripts/wsl-run.sh
+./scripts/linux-build.sh
+./scripts/linux-run.sh
 ```
 
+If eBPF fails to load as your user, run `sudo ./scripts/wsl-run.sh` once. The script will try to `setcap` the daemon binary (so it can load eBPF) and then drop back to your user for audio.
+
 By default the daemon listens on `http://127.0.0.1:17321`.
+
+## WSL2 Notes (Optional)
+
+If you’re developing on WSL2 and don’t have a distro installed yet:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+On WSL2, you may need to run `wsl --update` (from Windows) and restart WSL to get a kernel with eBPF + BTF.
 
 ## UI (Windows or WSL)
 

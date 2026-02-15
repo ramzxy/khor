@@ -8,10 +8,14 @@ add_executable(khor-daemon
   src/main.cpp
   src/audio_synth.cpp
   src/metrics.cpp
+  src/app/config.cpp
+  src/util/json.cpp
+  src/util/paths.cpp
 )
 
 target_include_directories(khor-daemon PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party
   ${CMAKE_CURRENT_SOURCE_DIR}/../bpf
   ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -49,6 +53,7 @@ if (UNIX AND EXISTS "/sys/kernel/btf/vmlinux")
       COMMAND ${CLANG}
         -g -O2 -target bpf
         -D__TARGET_ARCH_x86
+        -D__BPF__=1
         -I${CMAKE_CURRENT_BINARY_DIR}/generated
         -I/usr/include
         -I/usr/include/bpf

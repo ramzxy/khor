@@ -2,7 +2,10 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <numbers>
 #include <mutex>
 #include <vector>
@@ -83,8 +86,30 @@ void audio_cb(ma_device* device, void* out, const void* in, ma_uint32 frames) {
 } // namespace
 
 struct KhorAudio {
+  ma_context ctx{};
+  bool ctx_inited = false;
   ma_device device{};
 };
+
+static bool streq_ci(const char* a, const char* b) {
+  if (!a || !b) return false;
+  while (*a && *b) {
+    char ca = *a++;
+    char cb = *b++;
+    if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+    if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+    if (ca != cb) return false;
+  }
+  return *a == 0 && *b == 0;
+}
+
+static bool parse_backend_override(const char* s, ma_backend* out) {
+  if (!s || !out) return false;
+  if (streq_ci(s, "pulseaudio") || streq_ci(s, "pulse")) { *out = ma_backend_pulseaudio; return true; }
+  if (streq_ci(s, "alsa")) { *out = ma_backend_alsa; return true; }
+  if (streq_ci(s, "null")) { *out = ma_backend_null; return true; }
+  return false;
+}
 
 static bool audio_start(KhorAudio* a) {
   ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
@@ -93,13 +118,37 @@ static bool audio_start(KhorAudio* a) {
   cfg.sampleRate = (ma_uint32)kSampleRate;
   cfg.dataCallback = audio_cb;
 
-  if (ma_device_init(nullptr, &cfg, &a->device) != MA_SUCCESS) return false;
+  const char* backend_env = std::getenv("KHOR_AUDIO_BACKEND"); // pulseaudio|alsa|null
+  const bool allow_null = (std::getenv("KHOR_AUDIO_ALLOW_NULL") != nullptr);
+
+  ma_backend backends[3]{};
+  ma_uint32 backend_count = 0;
+
+  ma_backend forced{};
+  if (parse_backend_override(backend_env, &forced)) {
+    backends[backend_count++] = forced;
+  } else {
+    backends[backend_count++] = ma_backend_pulseaudio;
+    backends[backend_count++] = ma_backend_alsa;
+  }
+  if (allow_null) backends[backend_count++] = ma_backend_null;
+
+  if (ma_context_init(backends, backend_count, nullptr, &a->ctx) != MA_SUCCESS) return false;
+  a->ctx_inited = true;
+
+  if (ma_device_init(&a->ctx, &cfg, &a->device) != MA_SUCCESS) return false;
   if (ma_device_start(&a->device) != MA_SUCCESS) return false;
+
+  const char* backend_name = "unknown";
+  if (a->device.pContext) backend_name = ma_get_backend_name(a->device.pContext->backend);
+  std::fprintf(stderr, "khor-audio: backend=%s\n", backend_name);
   return true;
 }
 
 static void audio_stop(KhorAudio* a) {
   ma_device_uninit(&a->device);
+  if (a->ctx_inited) ma_context_uninit(&a->ctx);
+  a->ctx_inited = false;
 }
 
 static void audio_note_on(KhorAudio*, int midi, float velocity, double seconds) {

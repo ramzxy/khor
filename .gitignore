@@ -12,6 +12,9 @@ daemon/**/vmlinux.h
 daemon/**/khor.skel.h
 **/*.bpf.o
 
+# Downloaded single-header deps (see scripts/fetch_deps.sh)
+daemon/third_party/*.h
+
 # Node
 node_modules/
 ui/node_modules/
@@ -24,4 +27,3 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
-
