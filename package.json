@@ -1,0 +1,14 @@
+{
+  "name": "khor",
+  "version": "0.0.1",
+  "description": "Reserved package name",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "ui:dev": "npm --prefix ui run dev",
+    "ui:build": "npm --prefix ui run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}

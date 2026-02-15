@@ -1,0 +1,27 @@
+# Build outputs
+daemon/build/
+daemon/.cache/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/Makefile
+
+# Generated eBPF artifacts
+daemon/generated/
+daemon/**/vmlinux.h
+daemon/**/khor.skel.h
+**/*.bpf.o
+
+# Node
+node_modules/
+ui/node_modules/
+ui/dist/
+ui/.vite/
+npm-debug.log*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
