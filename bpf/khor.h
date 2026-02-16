@@ -42,6 +42,7 @@ struct khor_sample_payload {
   khor_u64 sched_switches;
   khor_u64 blk_read_bytes;
   khor_u64 blk_write_bytes;
+  khor_u64 blk_issue_count;
   khor_u64 lost_events; // ringbuf reserve failures since last flush
 };
 

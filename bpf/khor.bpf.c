@@ -103,7 +103,7 @@ static __always_inline void maybe_flush(struct khor_counters* c, const struct kh
   if (now - c->last_flush_ns < interval_ns) return;
 
   if (c->acc.exec_count || c->acc.net_rx_bytes || c->acc.net_tx_bytes || c->acc.sched_switches ||
-      c->acc.blk_read_bytes || c->acc.blk_write_bytes || c->acc.lost_events) {
+      c->acc.blk_read_bytes || c->acc.blk_write_bytes || c->acc.blk_issue_count || c->acc.lost_events) {
     emit_sample(c, cfg, now);
   }
 
@@ -113,6 +113,7 @@ static __always_inline void maybe_flush(struct khor_counters* c, const struct kh
   c->acc.sched_switches = 0;
   c->acc.blk_read_bytes = 0;
   c->acc.blk_write_bytes = 0;
+  c->acc.blk_issue_count = 0;
   c->acc.lost_events = 0;
   c->last_flush_ns = now;
 }
@@ -197,12 +198,29 @@ int tp_block_rq_issue(struct trace_event_raw_block_rq* ctx) {
   struct khor_counters* c = get_counters();
   if (!c) return 0;
 
+  (void)ctx;
+  c->acc.blk_issue_count++;
+
+  maybe_flush(c, cfg, bpf_ktime_get_ns());
+  return 0;
+}
+
+SEC("tracepoint/block/block_rq_complete")
+int tp_block_rq_complete(struct trace_event_raw_block_rq_completion* ctx) {
+  const struct khor_bpf_config* cfg = get_cfg();
+  if (!pass_filters(cfg)) return 0;
+  if (!(cfg_enabled_mask(cfg) & KHOR_PROBE_BLOCK)) return 0;
+
+  struct khor_counters* c = get_counters();
+  if (!c) return 0;
+
   // rwbs is a short string like "R", "W", "WS" etc.
   const char rw = ctx->rwbs[0];
+  const __u64 bytes = (__u64)ctx->nr_sector * 512ULL;
   if (rw == 'R') {
-    c->acc.blk_read_bytes += (__u64)ctx->bytes;
+    c->acc.blk_read_bytes += bytes;
   } else if (rw == 'W') {
-    c->acc.blk_write_bytes += (__u64)ctx->bytes;
+    c->acc.blk_write_bytes += bytes;
   }
 
   maybe_flush(c, cfg, bpf_ktime_get_ns());

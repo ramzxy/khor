@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <numbers>
 #include <optional>
@@ -515,7 +516,9 @@ bool AudioEngine::start(const AudioConfig& cfg, std::string* err) {
 
   impl_->backend_count = 0;
   ma_backend forced{};
-  if (parse_backend(cfg.backend, &forced)) {
+  std::string backend = cfg.backend;
+  if (const char* env = std::getenv("KHOR_AUDIO_BACKEND"); env && *env) backend = env;
+  if (parse_backend(backend, &forced)) {
     impl_->backends[impl_->backend_count++] = forced;
   } else {
     impl_->backends[impl_->backend_count++] = ma_backend_pulseaudio;
