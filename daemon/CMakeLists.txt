@@ -6,9 +6,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(khor-daemon
   src/main.cpp
-  src/audio_synth.cpp
   src/metrics.cpp
+  src/app/app.cpp
   src/app/config.cpp
+  src/audio/engine.cpp
+  src/bpf/collector.cpp
+  src/engine/music.cpp
+  src/engine/signals.cpp
+  src/http/server.cpp
+  src/midi/alsa_seq.cpp
+  src/osc/osc.cpp
   src/util/json.cpp
   src/util/paths.cpp
 )
@@ -21,13 +28,24 @@ target_include_directories(khor-daemon PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
-set_source_files_properties(src/audio_synth.cpp PROPERTIES COMPILE_DEFINITIONS MINIAUDIO_IMPLEMENTATION)
+set_source_files_properties(src/audio/engine.cpp PROPERTIES COMPILE_DEFINITIONS MINIAUDIO_IMPLEMENTATION)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBBPF REQUIRED libbpf)
 
 target_include_directories(khor-daemon PRIVATE ${LIBBPF_INCLUDE_DIRS})
 target_link_libraries(khor-daemon PRIVATE ${LIBBPF_LIBRARIES} pthread)
+
+# Optional: ALSA sequencer for MIDI output.
+find_path(ALSA_INCLUDE_DIR NAMES alsa/asoundlib.h)
+find_library(ALSA_LIBRARY NAMES asound)
+if (ALSA_INCLUDE_DIR AND ALSA_LIBRARY)
+  target_include_directories(khor-daemon PRIVATE ${ALSA_INCLUDE_DIR})
+  target_link_libraries(khor-daemon PRIVATE ${ALSA_LIBRARY})
+  target_compile_definitions(khor-daemon PRIVATE KHOR_HAS_ALSA_SEQ=1)
+else()
+  message(STATUS "ALSA sequencer headers not found; building without MIDI support.")
+endif()
 
 # ---- eBPF build steps (Linux-only) ----
 if (UNIX AND EXISTS "/sys/kernel/btf/vmlinux")

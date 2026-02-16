@@ -306,7 +306,7 @@ struct AudioEngine::Impl {
   ma_context ctx{};
   bool ctx_inited = false;
   ma_device device{};
-  bool device_inited = false;
+  std::atomic<bool> device_inited{false};
   ma_device_id chosen_playback_id{};
   bool has_chosen_playback_id = false;
 
@@ -552,7 +552,7 @@ struct AudioEngine::Impl {
       if (err) *err = "ma_device_init failed (audio device unavailable?)";
       return false;
     }
-    device_inited = true;
+    device_inited.store(true, std::memory_order_release);
 
     delay.init((uint32_t)cfg.sample_rate, 0.26f, 0.28f);
     reverb.init((uint32_t)cfg.sample_rate);
@@ -569,8 +569,8 @@ struct AudioEngine::Impl {
   }
 
   void stop_device() {
-    if (device_inited) ma_device_uninit(&device);
-    device_inited = false;
+    if (device_inited.load(std::memory_order_acquire)) ma_device_uninit(&device);
+    device_inited.store(false, std::memory_order_release);
     backend_name.clear();
     device_name.clear();
   }
@@ -581,7 +581,7 @@ AudioEngine::~AudioEngine() { stop(); delete impl_; impl_ = nullptr; }
 
 bool AudioEngine::start(const AudioConfig& cfg, std::string* err) {
   if (!impl_) return false;
-  if (impl_->device_inited) return true;
+  if (impl_->device_inited.load(std::memory_order_acquire)) return true;
 
   impl_->cfg = cfg;
   impl_->master_gain.store(cfg.master_gain, std::memory_order_relaxed);
@@ -618,13 +618,13 @@ bool AudioEngine::restart(const AudioConfig& cfg, std::string* err) {
   return start(cfg, err);
 }
 
-bool AudioEngine::is_running() const { return impl_ && impl_->device_inited; }
+bool AudioEngine::is_running() const { return impl_ && impl_->device_inited.load(std::memory_order_acquire); }
 
 std::string AudioEngine::backend_name() const { return impl_ ? impl_->backend_name : ""; }
 std::string AudioEngine::device_name() const { return impl_ ? impl_->device_name : ""; }
 
 void AudioEngine::submit_note(const NoteEvent& ev) {
-  if (!impl_ || !impl_->device_inited) return;
+  if (!impl_ || !impl_->device_inited.load(std::memory_order_acquire)) return;
   if (!impl_->q.push(ev)) {
     impl_->q_drops.fetch_add(1, std::memory_order_relaxed);
   }
