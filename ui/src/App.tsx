@@ -1,17 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from './lib/cn'
 
-type Metrics = {
-  events_total: number
-  events_dropped: number
-  exec_total: number
-  net_rx_bytes_total: number
-  net_tx_bytes_total: number
-  bpm: number
-  key_midi: number
+type ApiMetrics = {
+  ts_ms: number
+  totals: {
+    events_total: number
+    events_dropped: number
+    exec_total: number
+    net_rx_bytes_total: number
+    net_tx_bytes_total: number
+    sched_switch_total: number
+    blk_read_bytes_total: number
+    blk_write_bytes_total: number
+  }
+  rates: {
+    exec_s: number
+    rx_kbs: number
+    tx_kbs: number
+    csw_s: number
+    blk_r_kbs: number
+    blk_w_kbs: number
+  }
+  controls: {
+    bpm: number
+    key_midi: number
+    density: number
+    smoothing: number
+  }
+  history?: Array<{
+    ts_ms: number
+    exec_s: number
+    rx_kbs: number
+    tx_kbs: number
+    csw_s: number
+    blk_r_kbs: number
+    blk_w_kbs: number
+  }>
 }
 
-const API_BASE = 'http://127.0.0.1:17321'
+const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? 'http://127.0.0.1:17321'
 
 function midiToName(midi: number) {
   const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -21,18 +48,20 @@ function midiToName(midi: number) {
 }
 
 function App() {
-  const [metrics, setMetrics] = useState<Metrics | null>(null)
+  const [metrics, setMetrics] = useState<ApiMetrics | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [bpmDraft, setBpmDraft] = useState('110')
   const [keyDraft, setKeyDraft] = useState('62')
+  const [densityDraft, setDensityDraft] = useState('0.35')
+  const [smoothingDraft, setSmoothingDraft] = useState('0.85')
 
-  const prevRef = useRef<{ t: number; m: Metrics } | null>(null)
+  const prevRef = useRef<{ t: number; m: ApiMetrics } | null>(null)
   const [rates, setRates] = useState<{ exec: number; rxKBs: number; txKBs: number } | null>(null)
 
   async function fetchMetrics() {
-    const r = await fetch(`${API_BASE}/metrics`)
+    const r = await fetch(`${API_BASE}/api/metrics`)
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    return (await r.json()) as Metrics
+    return (await r.json()) as ApiMetrics
   }
 
   useEffect(() => {
@@ -43,16 +72,18 @@ function App() {
         if (!alive) return
         setMetrics(m)
         setErr(null)
-        setBpmDraft(String(Math.round(m.bpm)))
-        setKeyDraft(String(m.key_midi))
+        setBpmDraft(String(Math.round(m.controls.bpm)))
+        setKeyDraft(String(m.controls.key_midi))
+        setDensityDraft(String(m.controls.density.toFixed(2)))
+        setSmoothingDraft(String(m.controls.smoothing.toFixed(2)))
 
         const now = Date.now()
         const prev = prevRef.current
         if (prev) {
           const dt = Math.max(1, now - prev.t) / 1000
-          const exec = (m.exec_total - prev.m.exec_total) / dt
-          const rxKBs = (m.net_rx_bytes_total - prev.m.net_rx_bytes_total) / dt / 1024
-          const txKBs = (m.net_tx_bytes_total - prev.m.net_tx_bytes_total) / dt / 1024
+          const exec = (m.totals.exec_total - prev.m.totals.exec_total) / dt
+          const rxKBs = (m.totals.net_rx_bytes_total - prev.m.totals.net_rx_bytes_total) / dt / 1024
+          const txKBs = (m.totals.net_tx_bytes_total - prev.m.totals.net_tx_bytes_total) / dt / 1024
           setRates({ exec, rxKBs, txKBs })
         }
         prevRef.current = { t: now, m }
@@ -79,10 +110,20 @@ function App() {
   async function applyControl() {
     const bpm = Number(bpmDraft)
     const key = Number(keyDraft)
-    const url = new URL(`${API_BASE}/control`)
-    if (Number.isFinite(bpm)) url.searchParams.set('bpm', String(bpm))
-    if (Number.isFinite(key)) url.searchParams.set('key_midi', String(key))
-    await fetch(url.toString(), { method: 'POST' })
+    const density = Number(densityDraft)
+    const smoothing = Number(smoothingDraft)
+
+    const body: any = { music: {} }
+    if (Number.isFinite(bpm)) body.music.bpm = bpm
+    if (Number.isFinite(key)) body.music.key_midi = key
+    if (Number.isFinite(density)) body.music.density = density
+    if (Number.isFinite(smoothing)) body.music.smoothing = smoothing
+
+    await fetch(`${API_BASE}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
   }
 
   return (
@@ -92,7 +133,7 @@ function App() {
           <div>
             <h1 className="text-balance text-2xl font-semibold">khor</h1>
             <p className="text-pretty text-sm text-zinc-600">
-              Kernel activity to pitched synth. Daemon on <span className="tabular-nums">{API_BASE}</span>
+              Kernel activity to pitched synth. API base <span className="tabular-nums">{API_BASE}</span>
             </p>
           </div>
           <div className="text-right text-sm text-zinc-600">
@@ -115,19 +156,35 @@ function App() {
             <dl className="mt-3 grid gap-2 text-sm">
               <div className="flex items-center justify-between">
                 <dt className="text-zinc-600">events</dt>
-                <dd className="tabular-nums">{metrics?.events_total ?? '—'}</dd>
+                <dd className="tabular-nums">{metrics?.totals.events_total ?? '—'}</dd>
               </div>
               <div className="flex items-center justify-between">
                 <dt className="text-zinc-600">exec</dt>
-                <dd className="tabular-nums">{metrics?.exec_total ?? '—'}</dd>
+                <dd className="tabular-nums">{metrics?.totals.exec_total ?? '—'}</dd>
               </div>
               <div className="flex items-center justify-between">
                 <dt className="text-zinc-600">net rx</dt>
-                <dd className="tabular-nums">{metrics ? `${(metrics.net_rx_bytes_total / 1024 / 1024).toFixed(1)} MiB` : '—'}</dd>
+                <dd className="tabular-nums">
+                  {metrics ? `${(metrics.totals.net_rx_bytes_total / 1024 / 1024).toFixed(1)} MiB` : '—'}
+                </dd>
               </div>
               <div className="flex items-center justify-between">
                 <dt className="text-zinc-600">net tx</dt>
-                <dd className="tabular-nums">{metrics ? `${(metrics.net_tx_bytes_total / 1024 / 1024).toFixed(1)} MiB` : '—'}</dd>
+                <dd className="tabular-nums">
+                  {metrics ? `${(metrics.totals.net_tx_bytes_total / 1024 / 1024).toFixed(1)} MiB` : '—'}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-zinc-600">sched switch</dt>
+                <dd className="tabular-nums">{metrics?.totals.sched_switch_total ?? '—'}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-zinc-600">block r/w</dt>
+                <dd className="tabular-nums">
+                  {metrics
+                    ? `${(metrics.totals.blk_read_bytes_total / 1024 / 1024).toFixed(1)} / ${(metrics.totals.blk_write_bytes_total / 1024 / 1024).toFixed(1)} MiB`
+                    : '—'}
+                </dd>
               </div>
             </dl>
           </section>
@@ -154,6 +211,24 @@ function App() {
                 />
                 <span className="text-xs text-zinc-500 tabular-nums">{keyName}</span>
               </label>
+              <label className="grid gap-1">
+                <span className="text-xs text-zinc-600">Density</span>
+                <input
+                  className="h-10 rounded-lg border border-zinc-200 bg-white px-3 text-sm tabular-nums outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  inputMode="decimal"
+                  value={densityDraft}
+                  onChange={(e) => setDensityDraft(e.target.value)}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs text-zinc-600">Smoothing</span>
+                <input
+                  className="h-10 rounded-lg border border-zinc-200 bg-white px-3 text-sm tabular-nums outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  inputMode="decimal"
+                  value={smoothingDraft}
+                  onChange={(e) => setSmoothingDraft(e.target.value)}
+                />
+              </label>
               <div className="flex items-end">
                 <button
                   className={cn(
@@ -171,7 +246,7 @@ function App() {
               <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 <div className="font-medium">Daemon not reachable</div>
                 <div className="mt-1 text-pretty text-amber-800">
-                  {err}. Start it in WSL with <span className="font-mono">./scripts/wsl-run.sh</span>.
+                  {err}. Start it with <span className="font-mono">./scripts/linux-run.sh</span>.
                 </div>
               </div>
             ) : null}
@@ -179,7 +254,7 @@ function App() {
         </div>
 
         <footer className="mt-8 text-xs text-zinc-500">
-          MVP: pentatonic mapping with a simple poly synth. Next: proper ADSR, filter, delay/reverb, websocket streaming, presets.
+          v1: sample metrics via eBPF, config via /api/config, presets via /api/preset/select.
         </footer>
       </div>
     </div>
