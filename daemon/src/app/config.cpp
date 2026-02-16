@@ -56,6 +56,9 @@ JsonValue config_to_json(const KhorConfig& cfg) {
   root.o["bpf"] = JsonValue::make_object({
     {"enabled_mask", JsonValue::make_number((double)cfg.bpf_enabled_mask)},
     {"sample_interval_ms", JsonValue::make_number((double)cfg.bpf_sample_interval_ms)},
+    {"tgid_allow", JsonValue::make_number((double)cfg.bpf_tgid_allow)},
+    {"tgid_deny", JsonValue::make_number((double)cfg.bpf_tgid_deny)},
+    {"cgroup_id", JsonValue::make_number((double)cfg.bpf_cgroup_id)},
   });
 
   root.o["music"] = JsonValue::make_object({
@@ -123,6 +126,10 @@ bool config_from_json(const JsonValue& root, KhorConfig* cfg, std::string* err) 
     cfg->bpf_enabled_mask = (uint32_t)json_get_number(*bpf, "enabled_mask", cfg->bpf_enabled_mask);
     cfg->bpf_sample_interval_ms = (uint32_t)json_get_number(*bpf, "sample_interval_ms", cfg->bpf_sample_interval_ms);
     cfg->bpf_sample_interval_ms = std::clamp(cfg->bpf_sample_interval_ms, 10u, 5000u);
+
+    cfg->bpf_tgid_allow = (uint32_t)json_get_number(*bpf, "tgid_allow", cfg->bpf_tgid_allow);
+    cfg->bpf_tgid_deny = (uint32_t)json_get_number(*bpf, "tgid_deny", cfg->bpf_tgid_deny);
+    cfg->bpf_cgroup_id = (uint64_t)json_get_number(*bpf, "cgroup_id", (double)cfg->bpf_cgroup_id);
   }
 
   // music

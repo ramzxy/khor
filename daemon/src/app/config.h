@@ -25,6 +25,9 @@ struct KhorConfig {
   // eBPF
   uint32_t bpf_enabled_mask = 0xFFFFFFFFu;
   uint32_t bpf_sample_interval_ms = 200;
+  uint32_t bpf_tgid_allow = 0;
+  uint32_t bpf_tgid_deny = 0;
+  uint64_t bpf_cgroup_id = 0;
 
   // Music
   double bpm = 110.0;

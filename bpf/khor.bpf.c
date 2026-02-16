@@ -75,7 +75,10 @@ static __always_inline struct khor_counters* get_counters(void) {
 static __always_inline void emit_sample(struct khor_counters* c, const struct khor_bpf_config* cfg, __u64 now) {
   (void)cfg;
   struct khor_event* e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-  if (!e) return;
+  if (!e) {
+    c->acc.lost_events++;
+    return;
+  }
 
   __u64 pid_tgid = bpf_get_current_pid_tgid();
   e->ts_ns = now;
@@ -100,7 +103,7 @@ static __always_inline void maybe_flush(struct khor_counters* c, const struct kh
   if (now - c->last_flush_ns < interval_ns) return;
 
   if (c->acc.exec_count || c->acc.net_rx_bytes || c->acc.net_tx_bytes || c->acc.sched_switches ||
-      c->acc.blk_read_bytes || c->acc.blk_write_bytes) {
+      c->acc.blk_read_bytes || c->acc.blk_write_bytes || c->acc.lost_events) {
     emit_sample(c, cfg, now);
   }
 
@@ -110,6 +113,7 @@ static __always_inline void maybe_flush(struct khor_counters* c, const struct kh
   c->acc.sched_switches = 0;
   c->acc.blk_read_bytes = 0;
   c->acc.blk_write_bytes = 0;
+  c->acc.lost_events = 0;
   c->last_flush_ns = now;
 }
 
