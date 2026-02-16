@@ -10,6 +10,7 @@
 
 #include "miniaudio.h"
 
+#include "audio/dsp.h"
 #include "util/spsc_queue.h"
 
 namespace khor {
@@ -85,76 +86,6 @@ static bool icontains(std::string_view hay, std::string_view needle) {
   return false;
 }
 
-struct ADSR {
-  float a_s = 0.005f;
-  float d_s = 0.080f;
-  float s_level = 0.55f;
-  float r_s = 0.140f;
-
-  enum Stage : uint8_t { Off = 0, Attack, Decay, Sustain, Release } stage = Off;
-  float value = 0.0f;
-  float release_step = 0.0f;
-
-  void note_on(float sr) {
-    (void)sr;
-    stage = Attack;
-    value = 0.0f;
-    release_step = 0.0f;
-  }
-
-  void note_off(float sr) {
-    if (stage == Off || stage == Release) return;
-    stage = Release;
-    const float steps = std::max(1.0f, r_s * sr);
-    release_step = value / steps;
-  }
-
-  float tick(float sr) {
-    const float eps = 1e-6f;
-    switch (stage) {
-      case Off: value = 0.0f; break;
-      case Attack: {
-        const float steps = std::max(1.0f, a_s * sr);
-        value += 1.0f / steps;
-        if (value >= 1.0f) { value = 1.0f; stage = Decay; }
-      } break;
-      case Decay: {
-        const float steps = std::max(1.0f, d_s * sr);
-        value -= (1.0f - s_level) / steps;
-        if (value <= s_level) { value = s_level; stage = Sustain; }
-      } break;
-      case Sustain: break;
-      case Release: {
-        value -= release_step > 0.0f ? release_step : (1.0f / std::max(1.0f, r_s * sr));
-        if (value <= eps) { value = 0.0f; stage = Off; }
-      } break;
-    }
-    return value;
-  }
-};
-
-// TPT State Variable Filter (low-pass output).
-struct SVF {
-  float ic1eq = 0.0f;
-  float ic2eq = 0.0f;
-
-  float process(float in, float g, float k) {
-    // Zavalishin TPT SVF.
-    const float a1 = 1.0f / (1.0f + g * (g + k));
-    const float a2 = g * a1;
-    const float a3 = g * a2;
-
-    const float v3 = in - ic2eq;
-    const float v1 = a1 * ic1eq + a2 * v3;
-    const float v2 = ic2eq + a2 * ic1eq + a3 * v3;
-
-    ic1eq = 2.0f * v1 - ic1eq;
-    ic2eq = 2.0f * v2 - ic2eq;
-
-    return v2; // low-pass
-  }
-};
-
 struct Voice {
   bool active = false;
   int midi = 0;
@@ -162,13 +93,9 @@ struct Voice {
   float phase_inc = 0.0f;
   float velocity = 0.7f;
   int samples_until_release = 0;
-  ADSR env{};
-  SVF filter{};
+  dsp::Adsr env{};
+  dsp::Svf filter{};
 };
-
-static float midi_to_hz(int midi) {
-  return 440.0f * std::pow(2.0f, (midi - 69) / 12.0f);
-}
 
 struct Delay {
   std::vector<float> buf_l;
@@ -383,7 +310,7 @@ struct AudioEngine::Impl {
         }
       }
 
-      const float hz = midi_to_hz(ev.midi);
+      const float hz = dsp::midi_to_hz(ev.midi);
       slot->active = true;
       slot->midi = ev.midi;
       slot->phase = 0.0f;
@@ -391,7 +318,7 @@ struct AudioEngine::Impl {
       slot->velocity = ev.velocity;
       slot->samples_until_release = (int)(ev.dur_s * (float)sr);
       slot->env.note_on((float)sr);
-      slot->filter = SVF{};
+      slot->filter = dsp::Svf{};
     }
 
     const float cutoff = std::clamp(cutoff01.load(std::memory_order_relaxed), 0.0f, 1.0f);
@@ -423,7 +350,7 @@ struct AudioEngine::Impl {
         if (v.samples_until_release == 0) v.env.note_off((float)sr);
 
         float env = v.env.tick((float)sr);
-        if (v.env.stage == ADSR::Off) {
+        if (v.env.stage == dsp::Adsr::Off) {
           v.active = false;
           continue;
         }

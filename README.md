@@ -26,14 +26,14 @@ sudo apt-get install -y \
 On Fedora:
 ```bash
 sudo dnf install -y \
-  gcc gcc-c++ make cmake pkgconf-pkg-config clang llvm bpftool libbpf-devel
+  gcc gcc-c++ make cmake pkgconf-pkg-config clang llvm bpftool libbpf-devel alsa-lib-devel
 ```
 
 Notes:
 - `bpftool` is used to generate `vmlinux.h` and the libbpf skeleton header at build time.
-- `libasound2-dev` is only needed if you later switch to ALSA directly. The current MVP uses miniaudio (downloaded by script).
+- `libasound2-dev`/`alsa-lib-devel` is needed for MIDI output (ALSA sequencer). Audio output uses miniaudio (downloaded by script).
 - If you see ALSA "Permission denied" errors, ensure your user can access `/dev/snd/*` (common fix: `sudo usermod -aG audio $USER` then restart your session/WSL).
-- If you want eBPF without running as root, try: `sudo setcap cap_bpf,cap_perfmon+ep daemon/build/khor-daemon` (use `KHOR_DEBUG_LIBBPF=1` for verbose libbpf errors).
+- If you want eBPF without running as root, run once: `sudo setcap cap_bpf,cap_perfmon,cap_sys_resource+ep daemon/build/khor-daemon` (use `KHOR_DEBUG_LIBBPF=1` for verbose libbpf errors).
 
 ### 3) Fetch Single-Header Deps
 
@@ -48,9 +48,20 @@ Notes:
 ./scripts/linux-run.sh
 ```
 
-If eBPF fails to load as your user, run `sudo ./scripts/wsl-run.sh` once. The script will try to `setcap` the daemon binary (so it can load eBPF) and then drop back to your user for audio.
+If eBPF fails to load as your user, run `sudo ./scripts/linux-run.sh` once. The script will try to `setcap` the daemon binary (so it can load eBPF) and then drop back to your user for audio.
 
 By default the daemon listens on `http://127.0.0.1:17321`.
+
+## Install (User Daemon + UI)
+
+```bash
+./scripts/install.sh
+sudo setcap cap_bpf,cap_perfmon,cap_sys_resource+ep ~/.local/bin/khor-daemon
+systemctl --user daemon-reload
+systemctl --user enable --now khor.service
+```
+
+Open `http://127.0.0.1:17321`.
 
 ## WSL2 Notes (Optional)
 

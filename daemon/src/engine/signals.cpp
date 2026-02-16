@@ -19,8 +19,8 @@ static double norm_log(double v, double v_max) {
 }
 
 static double ema(double prev, double x, double alpha) {
-  // alpha=0 -> no smoothing, alpha=1 -> frozen.
-  alpha = clamp01(alpha);
+  // alpha=0 -> no smoothing, alpha=1 -> very smooth (but never fully frozen).
+  alpha = clamp01(alpha) * 0.98;
   return alpha * prev + (1.0 - alpha) * x;
 }
 
@@ -63,4 +63,3 @@ void Signals::update(const Totals& cur, double dt_s, double smoothing01) {
 }
 
 } // namespace khor
-

@@ -47,6 +47,21 @@ else()
   message(STATUS "ALSA sequencer headers not found; building without MIDI support.")
 endif()
 
+# ---- Tests ----
+enable_testing()
+add_executable(khor-tests
+  tests/test_main.cpp
+  src/engine/music.cpp
+  src/engine/signals.cpp
+)
+target_include_directories(khor-tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+)
+target_link_libraries(khor-tests PRIVATE pthread)
+add_test(NAME khor-tests COMMAND khor-tests)
+
 # ---- eBPF build steps (Linux-only) ----
 if (UNIX AND EXISTS "/sys/kernel/btf/vmlinux")
   find_program(BPFTOOL bpftool)
