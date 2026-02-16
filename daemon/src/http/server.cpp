@@ -138,14 +138,17 @@ bool HttpServer::start(const std::string& host, int port, const std::string& ui_
   impl_->http.Post("/api/audio/device", [&](const httplib::Request& req, httplib::Response& res) {
     std::string device;
     if (req.has_param("device")) device = req.get_param_value("device");
-    if (device.empty() && !req.body.empty()) {
+    bool body_had_device = false;
+    if (!req.body.empty()) {
       JsonValue body;
       JsonParseError perr;
       if (json_parse(req.body, &body, &perr)) {
-        device = json_get_string(body, "device", "");
+        body_had_device = (json_get(body, "device") != nullptr);
+        device = json_get_string(body, "device", device);
       }
     }
-    if (device.empty()) {
+    if (device == "default") device.clear();
+    if (device.empty() && !req.has_param("device") && !body_had_device) {
       res.status = 400;
       json_reply(res, json_error("missing device"));
       return;

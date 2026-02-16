@@ -1,0 +1,14 @@
+[Unit]
+Description=Khor kernel sonification daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/khor-daemon --config %h/.config/khor/config.json
+Restart=on-failure
+RestartSec=2
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
+
