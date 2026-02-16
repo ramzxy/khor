@@ -144,25 +144,22 @@ void OscClient::stop() {
 
 bool OscClient::is_running() const { return impl_ && impl_->fd >= 0; }
 
-static void send_raw(OscClient::Impl* impl, const std::vector<uint8_t>& payload) {
-  if (!impl || impl->fd < 0 || impl->addr_len == 0) return;
-  (void)::sendto(impl->fd, payload.data(), payload.size(), MSG_DONTWAIT, (const sockaddr*)&impl->addr, impl->addr_len);
-}
-
 void OscClient::send_note(const NoteEvent& ev) {
   if (!is_running()) return;
-  send_raw(impl_, osc_msg_note(ev));
+  const auto payload = osc_msg_note(ev);
+  (void)::sendto(impl_->fd, payload.data(), payload.size(), MSG_DONTWAIT, (const sockaddr*)&impl_->addr, impl_->addr_len);
 }
 
 void OscClient::send_signal(const char* name, float value01) {
   if (!is_running()) return;
-  send_raw(impl_, osc_msg_signal(name, value01));
+  const auto payload = osc_msg_signal(name, value01);
+  (void)::sendto(impl_->fd, payload.data(), payload.size(), MSG_DONTWAIT, (const sockaddr*)&impl_->addr, impl_->addr_len);
 }
 
 void OscClient::send_metrics(const SignalRates& r) {
   if (!is_running()) return;
-  send_raw(impl_, osc_msg_metrics(r));
+  const auto payload = osc_msg_metrics(r);
+  (void)::sendto(impl_->fd, payload.data(), payload.size(), MSG_DONTWAIT, (const sockaddr*)&impl_->addr, impl_->addr_len);
 }
 
 } // namespace khor
-

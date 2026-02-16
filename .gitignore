@@ -14,6 +14,7 @@ daemon/**/khor.skel.h
 
 # Downloaded single-header deps (see scripts/fetch_deps.sh)
 daemon/third_party/*.h
+daemon/third_party/*.hpp
 
 # Node
 node_modules/

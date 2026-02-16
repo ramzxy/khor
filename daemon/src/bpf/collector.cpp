@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -10,6 +11,7 @@
 
 #if defined(KHOR_HAS_BPF)
 #include "khor.skel.h"
+#include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #endif
 
@@ -219,4 +221,3 @@ void BpfCollector::stop() {
 }
 
 } // namespace khor
-
