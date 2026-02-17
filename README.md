@@ -1,6 +1,6 @@
 # khor
 
-Khor turns kernel activity into music on **native Linux**:
+Khor (or kernel choir) turns kernel activity into music on **native Linux**:
 
 - eBPF collectors aggregate low-overhead system metrics (exec/network/sched/block)
 - a deterministic music engine maps signals to notes + synth parameters
