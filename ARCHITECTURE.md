@@ -13,6 +13,36 @@
 6. **HTTP server** exposes status, metrics, configuration, and a streaming endpoint; also serves the UI bundle.
 7. **UI** shows status + charts + presets and writes config changes back to the daemon.
 
+## Audio Signal Flow
+
+```mermaid
+graph LR
+    Notes["Note Events"] --> Voices
+    
+    subgraph Synthesizer
+        Voices["Polyphonic Voices (x24)"]
+        subgraph PV["Per-Voice"]
+            Osc["Oscillator (Sin/Tri)"]
+            Env["ADSR Envelope"]
+            Filt["SVF Filter"]
+            Osc -->|*| Env
+            Env --> Filt
+        end
+        Voices -->|Sum| Mix["Mix Bus"]
+    end
+    
+    subgraph FXChain["FX Chain"]
+        Mix --> Delay["Stereo Delay"]
+        Mix --> Reverb["Reverb"]
+        Delay -->|Mix| Master
+        Reverb -->|Mix| Master
+        Mix -->|Dry| Master
+    end
+    
+    Master["Master Output"] --> Limiter
+    Limiter --> Output
+```
+
 ## Components (Source Layout)
 
 - `bpf/`
@@ -35,6 +65,27 @@
 - **Audio callback thread**: real-time audio; must not lock.
 - **HTTP thread**: serves API + UI + SSE stream.
 
+```mermaid
+graph TD
+    Main["Main Thread"] -->|Spawns| BPF_Thread
+    Main -->|Spawns| HTTP_Thread
+    Main -->|Spawns| Audio_Thread
+    
+    subgraph Threads
+        BPF_Thread["BPF Poller Thread"]
+        HTTP_Thread["HTTP Server Thread"]
+        Audio_Thread["Audio Callback (High Priority)"]
+    end
+    
+    BPF_Thread -->|Write| Metrics["Atomic Metrics Support"]
+    HTTP_Thread -->|Read| Metrics
+    
+    Audio_Thread -->|Run| MusicTick["Music Engine Tick"]
+    MusicTick -->|Read| Metrics
+    MusicTick -->|Generate| Notes["Note Queue"]
+    Notes -->|Consume| Synth["Audio Render"]
+```
+
 Real-time safety rule: the audio callback must only read from lock-free structures (SPSC queue, atomics).
 
 ## Security / Privilege Model
@@ -53,4 +104,3 @@ Real-time safety rule: the audio callback must only read from lock-free structur
 
 - Production UI is served as static files from a configured `--ui-dir` (default install location).
 - Dev mode can run `ui` via Vite separately; the UI can point at a different API base.
-

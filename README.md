@@ -10,7 +10,56 @@ Khor turns kernel activity into music on **native Linux**:
 
 This repo targets Linux as the primary platform. Root is **not** the normal run mode: use a one-time `setcap` for eBPF.
 
-See `ARCHITECTURE.md` for the dataflow.
+
+See `ARCHITECTURE.md` for the detailed dataflow.
+
+## Core Concepts
+
+1.  **eBPF Probes (The Ears)**: Traces `execve` (programs starting), `net_dev_queue` (network traffic), `sched_switch` (context switches), and `block_rq_issue` (disk I/O).
+2.  **Signal Pipeline (The Brain)**: Normalizes raw event counts into `0.0` to `1.0` control signals using logarithmic scaling and exponential smoothing.
+3.  **Music Engine (The Composer)**: A step sequencer that deterministically generates music based on these signals.
+4.  **Audio Engine (The Voice)**: A custom polyphonic synthesizer (subtractive synthesis, ADSR, delay/reverb).
+
+## High-Level Architecture
+
+```mermaid
+graph TD
+    subgraph Kernel Space
+        P_Exec[Trace: Exec]
+        P_Net[Trace: Network]
+        P_Sched[Trace: Sched]
+        P_Block[Trace: Block I/O]
+        
+        P_Exec -->|Update| Map[Per-CPU Map Aggregation]
+        P_Net -->|Update| Map
+        P_Sched -->|Update| Map
+        P_Block -->|Update| Map
+        
+        Map -->|Flush Periodically| RB[BPF Ring Buffer]
+    end
+
+    subgraph Userspace Daemon
+        Collector[BPF Collector]
+        Signal[Signal Normalizer]
+        Music[Music Engine]
+        Audio[Audio Engine]
+        API[HTTP API]
+        
+        RB -->|Read Events| Collector
+        Collector -->|Raw Metrics| Signal
+        Signal -->|Smooth 0..1 Signals| Music
+        Music -->|Note Events| Audio
+        Audio -->|Sound| Speakers[Speakers]
+        
+        Signal -->|Metrics| API
+        Music -->|State| API
+    end
+
+    subgraph UI
+        Browser[Web Browser]
+        Browser -->|Poll/SSE| API
+    end
+```
 
 ## Quick Start (From Source)
 
