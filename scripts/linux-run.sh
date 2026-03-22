@@ -15,7 +15,7 @@ fi
 if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
   echo "khor: running under sudo; will drop privileges to '$SUDO_USER' for audio" >&2
   if command -v setcap >/dev/null 2>&1; then
-    if setcap cap_bpf,cap_perfmon,cap_sys_resource+ep "$DAEMON"; then
+    if setcap cap_bpf,cap_perfmon,cap_sys_resource,cap_sys_admin,cap_dac_read_search+ep "$DAEMON"; then
       echo "khor: setcap ok ($(getcap "$DAEMON" 2>/dev/null || true))" >&2
     else
       echo "khor: warning: setcap failed; eBPF may require sudo/root" >&2

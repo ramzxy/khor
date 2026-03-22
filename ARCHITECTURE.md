@@ -92,7 +92,7 @@ Real-time safety rule: the audio callback must only read from lock-free structur
 
 - Default runtime is a **user process**.
 - eBPF requires capabilities:
-  - recommended: one-time `setcap cap_bpf,cap_perfmon,cap_sys_resource+ep khor-daemon`
+  - recommended: one-time `setcap cap_bpf,cap_perfmon,cap_sys_resource,cap_sys_admin,cap_dac_read_search+ep khor-daemon`
 - HTTP binds to `127.0.0.1` by default.
 
 ## Configuration

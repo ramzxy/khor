@@ -1,17 +1,46 @@
 # khor
 
-Khor (or kernel choir) turns kernel activity into music on **native Linux**:
+<p align="center">
+  <strong>Realtime kernel orchestra for native Linux.</strong><br />
+  khor turns live system activity into deterministic music with eBPF collection, a built-in synth engine, and a control UI for shaping the result in real time.
+</p>
 
-- eBPF collectors aggregate low-overhead system metrics (exec/network/sched/block)
-- a deterministic music engine maps signals to notes + synth parameters
-- audio plays locally (miniaudio via PulseAudio/PipeWire or ALSA)
-- optional outputs: **OSC (UDP)** and **MIDI (ALSA sequencer)**
-- a built-in web UI shows status, charts, presets, and live control
+<p align="center">
+  <img src="./docs/screenshots/hero-dashboard.png" alt="khor dashboard overview" width="100%" />
+</p>
 
-This repo targets Linux as the primary platform. Root is **not** the normal run mode: use a one-time `setcap` for eBPF.
+<p align="center">
+  <em>Live telemetry, system health, preset mapping, and output routing in the built-in dashboard.</em>
+</p>
 
+<table>
+  <tr>
+    <td width="50%">
+      <img src="./docs/screenshots/runtime-lanes.png" alt="khor runtime health and live signal lanes" />
+    </td>
+    <td width="50%">
+      <img src="./docs/screenshots/mapping-routing.png" alt="khor sequencer mapping and adapter routing" />
+    </td>
+  </tr>
+</table>
 
-See `ARCHITECTURE.md` for the detailed dataflow.
+## Overview
+
+Khor (kernel choir) turns system activity into music on **native Linux**:
+
+- eBPF collectors aggregate low-overhead system metrics across exec, network, scheduler, and block I/O activity
+- a deterministic music engine maps those signals into notes, rhythm, and synth parameters
+- audio plays locally through miniaudio with PulseAudio, PipeWire, or ALSA
+- optional outputs mirror the signal to **OSC (UDP)** and **MIDI (ALSA sequencer)**
+- a built-in web UI exposes status, charts, presets, and live controls
+
+| Collect | Compose | Perform |
+| --- | --- | --- |
+| Trace kernel activity with eBPF probes and aggregate it into stable realtime metrics. | Convert normalized signals into a deterministic step-sequencer score and synth modulation. | Hear the result locally and steer it live through the dashboard, MIDI, or OSC. |
+
+> Linux is the primary target. Root is **not** the normal run mode; use a one-time `setcap` for eBPF.
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the detailed dataflow.
 
 ## Core Concepts
 
@@ -139,7 +168,7 @@ Set `VITE_API_BASE` if your daemon is not on the default address/port.
 Enable eBPF without sudo/root runtime (one-time):
 
 ```bash
-sudo setcap cap_bpf,cap_perfmon,cap_sys_resource+ep ~/.local/bin/khor-daemon
+sudo setcap cap_bpf,cap_perfmon,cap_sys_resource,cap_sys_admin,cap_dac_read_search+ep ~/.local/bin/khor-daemon
 getcap ~/.local/bin/khor-daemon
 ```
 
@@ -174,8 +203,13 @@ Uninstall:
 If `/api/health` shows `BPF disabled: EPERM` (or similar):
 
 1. Verify the binary has caps: `getcap ~/.local/bin/khor-daemon`
-2. Ensure your kernel supports `CAP_BPF`/`CAP_PERFMON` (older kernels may require root)
-3. For libbpf debug logs: `KHOR_DEBUG_LIBBPF=1 ./scripts/linux-run.sh`
+2. Ensure your kernel supports `CAP_BPF`/`CAP_PERFMON` (older kernels may require root).
+3. **Ubuntu/Debian Users**: These distros set `kernel.perf_event_paranoid=3` by default, which breaks unprivileged tracepoint attachment even with capabilities. To fix this, temporarily lower the value to the upstream kernel default:
+   ```bash
+   sudo sysctl -w kernel.perf_event_paranoid=2
+   ```
+   To persist this across reboots, add it to `/etc/sysctl.d/60-khor-perf.conf`.
+4. For libbpf debug logs: `KHOR_DEBUG_LIBBPF=1 ./scripts/linux-run.sh`
 
 Fake mode is off by default. Enable it explicitly:
 
@@ -288,4 +322,3 @@ ctest --output-on-failure
 Project license: see `LICENSE`.
 
 Third-party notices: see `THIRD_PARTY_NOTICES.md`.
-

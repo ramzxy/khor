@@ -43,7 +43,7 @@ install -m 0644 "${ROOT_DIR}/systemd/khor.service" "${UNIT_DST}"
 echo
 echo "==> Next steps"
 echo "1) One-time capabilities (for eBPF without sudo/root runtime):"
-echo "   sudo setcap cap_bpf,cap_perfmon,cap_sys_resource+ep \"${BIN_DST}\""
+echo "   sudo setcap cap_bpf,cap_perfmon,cap_sys_resource,cap_sys_admin,cap_dac_read_search+ep \"${BIN_DST}\""
 echo "   getcap \"${BIN_DST}\""
 echo
 echo "2) Start at login:"
