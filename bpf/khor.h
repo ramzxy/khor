@@ -25,6 +25,8 @@ enum khor_probe_mask {
   KHOR_PROBE_NET   = 1u << 1,
   KHOR_PROBE_SCHED = 1u << 2,
   KHOR_PROBE_BLOCK = 1u << 3,
+  KHOR_PROBE_TCP   = 1u << 4,
+  KHOR_PROBE_IRQ   = 1u << 5,
 };
 
 struct khor_bpf_config {
@@ -44,6 +46,8 @@ struct khor_sample_payload {
   khor_u64 blk_write_bytes;
   khor_u64 blk_issue_count;
   khor_u64 lost_events; // ringbuf reserve failures since last flush
+  khor_u64 tcp_retransmits;
+  khor_u64 irq_count;
 };
 
 struct khor_event {
@@ -55,6 +59,6 @@ struct khor_event {
   char comm[KHOR_COMM_LEN];
   union {
     struct khor_sample_payload sample;
-    khor_u64 _u64[8]; // keep event size stable if payload evolves
+    khor_u64 _u64[10]; // keep event size stable
   } u;
 };
