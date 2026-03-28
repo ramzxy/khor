@@ -74,7 +74,7 @@ graph TD
     end
 
     subgraph Userspace Daemon
-        PSI[/proc/pressure/memory]
+        PSI["PSI Memory Pressure"]
         Collector[BPF Collector]
         Signal[Signal Normalizer]
         Music[Music Engine]
@@ -87,7 +87,7 @@ graph TD
         Collector -->|Raw Metrics| Signal
         PSI -->|Memory Pressure| Signal
         Signal -->|Smooth 0..1 Signals| Music
-        Music -->|Ch1 Melody, Ch2 Bass, Ch3 Chords, Ch10 Perc| Audio
+        Music -->|Multi-Channel Notes| Audio
         Music -->|Multi-Channel Notes| MIDI
         Music -->|Notes + Signals| OSC
         Audio -->|Sound| Speakers[Speakers]
