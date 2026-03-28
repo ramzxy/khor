@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { cn } from './lib/cn'
+import { KhorVisualizer } from './components/visualizer/KhorVisualizer'
 
 type ApiHealth = {
   ts_ms: number
@@ -38,6 +39,8 @@ type ApiMetrics = {
     sched_switch_total: number
     blk_read_bytes_total: number
     blk_write_bytes_total: number
+    tcp_retransmit_total: number
+    irq_total: number
   }
   rates: {
     exec_s: number
@@ -46,6 +49,9 @@ type ApiMetrics = {
     csw_s: number
     blk_r_kbs: number
     blk_w_kbs: number
+    retx_s: number
+    irq_s: number
+    mem_pct: number
   }
   controls: { bpm: number; key_midi: number; density: number; smoothing: number }
 }
@@ -115,11 +121,11 @@ const SCALE_LABELS: Record<string, string> = {
 }
 const compactNumber = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 const fieldClassName =
-  'h-10 w-full rounded-[16px] border border-slate-700/80 bg-slate-950/88 px-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/45 focus:ring-4 focus:ring-cyan-400/10'
+  'h-10 w-full rounded-[16px] border border-slate-700/80 bg-black/90 px-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/45 focus:ring-4 focus:ring-cyan-400/10'
 const fieldPanelClassName =
   'grid min-w-0 gap-2 rounded-[20px] border border-white/10 bg-slate-900/72 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
 const insetMetricCardClassName =
-  'rounded-[18px] border border-white/10 bg-slate-950/66 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+  'rounded-[18px] border border-white/10 bg-black/68 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
 
 const api = (path: string) => `${API_BASE}${path}`
 
@@ -178,7 +184,7 @@ function Sparkline(props: { points: RatePoint[]; k: keyof ApiMetrics['rates']; c
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className={cn('h-16 w-full', props.className)}>
-      <path d={areaPath} fill="currentColor" opacity="0.12" />
+      <path d={areaPath} fill="currentColor" opacity="0.18" />
       <path d={linePath} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d={`M${pad},${h - pad} L${w - pad},${h - pad}`} stroke="currentColor" opacity="0.1" />
       <circle cx={last.x} cy={last.y} r="3" fill="currentColor" opacity="0.92" />
@@ -206,7 +212,7 @@ function SectionPanel({ eyebrow, title, subtitle, actions, className, children }
   return (
     <section
       className={cn(
-        'min-w-0 rounded-[28px] border border-white/10 bg-slate-950/62 p-4 shadow-[0_24px_70px_rgba(2,6,23,0.55)] backdrop-blur-xl sm:p-5',
+        'min-w-0 rounded-[28px] border border-white/10 bg-black/65 p-4 shadow-[0_24px_70px_rgba(2,6,23,0.55)] backdrop-blur-xl sm:p-5',
         className,
       )}
     >
@@ -239,18 +245,18 @@ function StatusTile({ label, state, detail, tone }: StatusTileProps) {
   const toneClasses =
     tone === 'emerald'
       ? {
-          panel: 'border-emerald-400/20 bg-gradient-to-br from-emerald-500/12 via-slate-950/94 to-slate-950/98',
+          panel: 'border-emerald-400/20 bg-gradient-to-br from-emerald-500/12 via-black/94 to-black/98',
           badge: 'border border-emerald-400/20 bg-emerald-400/12 text-emerald-200',
           dot: 'bg-emerald-300',
         }
       : tone === 'amber'
         ? {
-            panel: 'border-amber-400/20 bg-gradient-to-br from-amber-500/12 via-slate-950/94 to-slate-950/98',
+            panel: 'border-amber-400/20 bg-gradient-to-br from-amber-500/12 via-black/94 to-black/98',
             badge: 'border border-amber-400/20 bg-amber-400/12 text-amber-200',
             dot: 'bg-amber-300',
           }
         : {
-            panel: 'border-white/10 bg-gradient-to-br from-slate-800/72 to-slate-950/98',
+            panel: 'border-white/10 bg-gradient-to-br from-slate-800/72 to-black/98',
             badge: 'border border-white/10 bg-white/8 text-slate-200',
             dot: 'bg-slate-400',
           }
@@ -277,7 +283,7 @@ function RateCard({ label, value, detail, tintClassName, chartClassName, childre
           <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-400">{label}</div>
           <div className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-slate-50 tabular-nums">{value}</div>
         </div>
-        <div className="rounded-full border border-white/10 bg-slate-950/68 px-3 py-1 text-xs text-slate-300">{detail}</div>
+        <div className="rounded-full border border-white/10 bg-black/72 px-3 py-1 text-xs text-slate-300">{detail}</div>
       </div>
       <div className={cn('mt-5 rounded-[22px] border border-white/10 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]', chartClassName)}>
         {children}
@@ -320,8 +326,11 @@ export default function App() {
 
   const [err, setErr] = useState<string | null>(null)
   const [restartHint, setRestartHint] = useState<string | null>(null)
+  const [showVisualizer, setShowVisualizer] = useState(false)
 
   const esRef = useRef<EventSource | null>(null)
+
+  const closeVisualizer = useCallback(() => setShowVisualizer(false), [])
 
   const keyName = useMemo(() => {
     const midi = config?.music?.key_midi
@@ -361,6 +370,9 @@ export default function App() {
     read: getWindowStats(recentHistory, 'blk_r_kbs'),
     write: getWindowStats(recentHistory, 'blk_w_kbs'),
   }
+  const retxWindow = getWindowStats(recentHistory, 'retx_s')
+  const irqWindow = getWindowStats(recentHistory, 'irq_s')
+  const memWindow = getWindowStats(recentHistory, 'mem_pct')
 
   async function refreshHealth() {
     const h = await fetchJson<ApiHealth>(api('/api/health'))
@@ -485,7 +497,7 @@ export default function App() {
 
       <main className="app-shell relative mx-auto flex w-full max-w-none flex-col gap-4 px-3 py-5 sm:px-4 lg:px-5 xl:px-6">
         <header className="reveal grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <section className="rounded-[34px] border border-white/10 bg-slate-950/68 p-6 shadow-[0_24px_70px_rgba(2,6,23,0.58)] backdrop-blur-xl sm:p-8">
+          <section className="rounded-[34px] border border-white/10 bg-black/72 p-6 shadow-[0_24px_70px_rgba(2,6,23,0.58)] backdrop-blur-xl sm:p-8">
             <div className="flex flex-wrap items-center gap-3">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-900/84 px-4 py-2 text-xs text-slate-300 shadow-[0_12px_30px_rgba(2,6,23,0.3)]">
                 <span className={cn('h-2.5 w-2.5 rounded-full', err ? 'bg-amber-500' : 'bg-emerald-500')} />
@@ -496,6 +508,12 @@ export default function App() {
               <div className="rounded-full border border-white/10 bg-slate-900/70 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">
                 native linux music engine
               </div>
+              <button
+                onClick={() => setShowVisualizer(true)}
+                className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-200 shadow-[0_12px_30px_rgba(8,47,73,0.3)] transition-colors hover:bg-cyan-400/18"
+              >
+                Visualizer
+              </button>
             </div>
 
             <div className="mt-10 max-w-3xl">
@@ -524,7 +542,7 @@ export default function App() {
                     </span>
                   )
                 }
-                tintClassName={err ? 'border-amber-400/20 bg-gradient-to-br from-amber-500/12 via-slate-950/92 to-slate-950/96' : 'border-emerald-400/20 bg-gradient-to-br from-emerald-500/12 via-slate-950/92 to-slate-950/96'}
+                tintClassName={err ? 'border-amber-400/20 bg-gradient-to-br from-amber-500/12 via-black/92 to-slate-950/96' : 'border-emerald-400/20 bg-gradient-to-br from-emerald-500/12 via-black/92 to-slate-950/96'}
               />
               <HeroStat
                 label="Sequence"
@@ -544,7 +562,7 @@ export default function App() {
                     audio {health?.audio.ok ? 'live' : 'idle'} · midi {health?.midi.ok ? 'live' : 'off'} · osc {health?.osc.ok ? 'live' : 'off'}
                   </span>
                 }
-                tintClassName="border-sky-400/20 bg-gradient-to-br from-sky-500/12 via-slate-950/92 to-slate-950/96"
+                tintClassName="border-sky-400/20 bg-gradient-to-br from-sky-500/12 via-black/92 to-slate-950/96"
               />
             </div>
           </section>
@@ -588,7 +606,7 @@ export default function App() {
                     avg {formatRate(execWindow.average)}
                   </span>
                 }
-                tintClassName="border-emerald-400/18 bg-gradient-to-br from-emerald-500/10 via-slate-950/92 to-slate-950/98"
+                tintClassName="border-emerald-400/18 bg-gradient-to-br from-emerald-500/10 via-black/92 to-black/98"
               >
                 <div className="text-emerald-300">
                   <Sparkline points={recentHistory} k="exec_s" />
@@ -605,7 +623,7 @@ export default function App() {
                     tx peak {formatRate(networkWindow.tx.peak)}
                   </span>
                 }
-                tintClassName="border-rose-400/18 bg-gradient-to-br from-rose-500/10 via-slate-950/92 to-slate-950/98"
+                tintClassName="border-rose-400/18 bg-gradient-to-br from-rose-500/10 via-black/92 to-black/98"
               >
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="text-rose-300">
@@ -627,7 +645,7 @@ export default function App() {
                     avg {formatRate(schedulerWindow.average, 0)}
                   </span>
                 }
-                tintClassName="border-white/10 bg-gradient-to-br from-slate-800/72 to-slate-950/98"
+                tintClassName="border-white/10 bg-gradient-to-br from-slate-800/72 to-black/98"
               >
                 <div className="text-slate-200">
                   <Sparkline points={recentHistory} k="csw_s" />
@@ -644,7 +662,7 @@ export default function App() {
                     w peak {formatRate(blockWindow.write.peak)}
                   </span>
                 }
-                tintClassName="border-sky-400/18 bg-gradient-to-br from-sky-500/10 via-slate-950/92 to-slate-950/98"
+                tintClassName="border-sky-400/18 bg-gradient-to-br from-sky-500/10 via-black/92 to-black/98"
               >
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="text-amber-300">
@@ -653,6 +671,39 @@ export default function App() {
                   <div className="text-cyan-300">
                     <Sparkline points={recentHistory} k="blk_w_kbs" />
                   </div>
+                </div>
+              </TelemetryLane>
+
+              <TelemetryLane
+                label="TCP retransmits"
+                value={formatRate(metrics?.rates.retx_s)}
+                detail={<span>peak {formatRate(retxWindow.peak)}</span>}
+                tintClassName="border-red-400/18 bg-gradient-to-br from-red-500/10 via-black/92 to-black/98"
+              >
+                <div className="text-red-300">
+                  <Sparkline points={recentHistory} k="retx_s" />
+                </div>
+              </TelemetryLane>
+
+              <TelemetryLane
+                label="Interrupts"
+                value={formatRate(metrics?.rates.irq_s, 0)}
+                detail={<span>peak {formatRate(irqWindow.peak, 0)}</span>}
+                tintClassName="border-violet-400/18 bg-gradient-to-br from-violet-500/10 via-black/92 to-black/98"
+              >
+                <div className="text-violet-300">
+                  <Sparkline points={recentHistory} k="irq_s" />
+                </div>
+              </TelemetryLane>
+
+              <TelemetryLane
+                label="Memory pressure"
+                value={metrics ? `${formatRate(metrics.rates.mem_pct)}%` : '—'}
+                detail={<span>peak {formatRate(memWindow.peak)}%</span>}
+                tintClassName="border-fuchsia-400/18 bg-gradient-to-br from-fuchsia-500/10 via-black/92 to-black/98"
+              >
+                <div className="text-fuchsia-300">
+                  <Sparkline points={recentHistory} k="mem_pct" />
                 </div>
               </TelemetryLane>
             </div>
@@ -733,7 +784,7 @@ export default function App() {
                 label="exec / s"
                 value={formatRate(metrics?.rates.exec_s)}
                 detail="process launches"
-                tintClassName="border-emerald-400/18 bg-gradient-to-br from-emerald-500/10 via-slate-950/92 to-slate-950/98"
+                tintClassName="border-emerald-400/18 bg-gradient-to-br from-emerald-500/10 via-black/92 to-black/98"
                 chartClassName="bg-emerald-400/[0.05]"
               >
                 <div className="text-emerald-300">
@@ -745,7 +796,7 @@ export default function App() {
                 label="network"
                 value={metrics ? `${formatRate(metrics.rates.rx_kbs)} / ${formatRate(metrics.rates.tx_kbs)}` : '—'}
                 detail="rx / tx kB/s"
-                tintClassName="border-rose-400/18 bg-gradient-to-br from-rose-500/10 via-slate-950/92 to-slate-950/98"
+                tintClassName="border-rose-400/18 bg-gradient-to-br from-rose-500/10 via-black/92 to-black/98"
                 chartClassName="bg-rose-400/[0.05]"
               >
                 <div className="grid grid-cols-2 gap-3">
@@ -762,7 +813,7 @@ export default function App() {
                 label="scheduler"
                 value={formatRate(metrics?.rates.csw_s, 0)}
                 detail="context switches / s"
-                tintClassName="border-white/10 bg-gradient-to-br from-slate-800/72 to-slate-950/98"
+                tintClassName="border-white/10 bg-gradient-to-br from-slate-800/72 to-black/98"
                 chartClassName="bg-white/[0.03]"
               >
                 <div className="text-slate-200">
@@ -774,7 +825,7 @@ export default function App() {
                 label="block io"
                 value={metrics ? `${formatRate(metrics.rates.blk_r_kbs)} / ${formatRate(metrics.rates.blk_w_kbs)}` : '—'}
                 detail="read / write kB/s"
-                tintClassName="border-sky-400/18 bg-gradient-to-br from-sky-500/10 via-slate-950/92 to-slate-950/98"
+                tintClassName="border-sky-400/18 bg-gradient-to-br from-sky-500/10 via-black/92 to-black/98"
                 chartClassName="bg-sky-400/[0.05]"
               >
                 <div className="grid grid-cols-2 gap-3">
@@ -784,6 +835,42 @@ export default function App() {
                   <div className="text-cyan-300">
                     <Sparkline points={history} k="blk_w_kbs" />
                   </div>
+                </div>
+              </RateCard>
+
+              <RateCard
+                label="retransmits"
+                value={formatRate(metrics?.rates.retx_s)}
+                detail="tcp retransmits / s"
+                tintClassName="border-red-400/18 bg-gradient-to-br from-red-500/10 via-black/92 to-black/98"
+                chartClassName="bg-red-400/[0.05]"
+              >
+                <div className="text-red-300">
+                  <Sparkline points={history} k="retx_s" />
+                </div>
+              </RateCard>
+
+              <RateCard
+                label="interrupts"
+                value={formatRate(metrics?.rates.irq_s, 0)}
+                detail="hardware IRQs / s"
+                tintClassName="border-violet-400/18 bg-gradient-to-br from-violet-500/10 via-black/92 to-black/98"
+                chartClassName="bg-violet-400/[0.05]"
+              >
+                <div className="text-violet-300">
+                  <Sparkline points={history} k="irq_s" />
+                </div>
+              </RateCard>
+
+              <RateCard
+                label="memory pressure"
+                value={metrics ? `${formatRate(metrics.rates.mem_pct)}%` : '—'}
+                detail="PSI some avg10"
+                tintClassName="border-fuchsia-400/18 bg-gradient-to-br from-fuchsia-500/10 via-black/92 to-black/98"
+                chartClassName="bg-fuchsia-400/[0.05]"
+              >
+                <div className="text-fuchsia-300">
+                  <Sparkline points={history} k="mem_pct" />
                 </div>
               </RateCard>
             </div>
@@ -967,7 +1054,7 @@ export default function App() {
           >
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1.04fr)_minmax(0,0.96fr)]">
               <div className="grid min-w-0 gap-3">
-                <div className="min-w-0 rounded-[24px] border border-emerald-400/18 bg-gradient-to-br from-emerald-500/10 via-slate-950/92 to-slate-950/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="min-w-0 rounded-[24px] border border-emerald-400/18 bg-gradient-to-br from-emerald-500/10 via-black/92 to-black/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="text-base font-semibold tracking-[-0.03em] text-slate-50">Audio</div>
@@ -980,7 +1067,7 @@ export default function App() {
                   </div>
 
                   <div className="mt-4 grid gap-3">
-                    <label className="grid gap-2.5 rounded-[18px] border border-white/10 bg-slate-950/66 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <label className="grid gap-2.5 rounded-[18px] border border-white/10 bg-black/68 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">Master gain</span>
                         <span className="text-sm font-semibold tabular-nums text-slate-100">{config ? config.audio.master_gain.toFixed(2) : '—'}</span>
@@ -999,7 +1086,7 @@ export default function App() {
                       />
                     </label>
 
-                    <div className="rounded-[18px] border border-white/10 bg-slate-950/66 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <div className="rounded-[18px] border border-white/10 bg-black/68 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">Device</span>
                         <button
@@ -1035,7 +1122,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="min-w-0 rounded-[24px] border border-amber-400/18 bg-gradient-to-br from-amber-500/10 via-slate-950/92 to-slate-950/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="min-w-0 rounded-[24px] border border-amber-400/18 bg-gradient-to-br from-amber-500/10 via-black/92 to-black/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-base font-semibold tracking-[-0.03em] text-slate-50">Fake mode</div>
@@ -1050,7 +1137,7 @@ export default function App() {
               </div>
 
               <div className="grid min-w-0 gap-3">
-                <div className="min-w-0 rounded-[24px] border border-white/10 bg-gradient-to-br from-slate-800/72 to-slate-950/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="min-w-0 rounded-[24px] border border-white/10 bg-gradient-to-br from-slate-800/72 to-black/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="text-base font-semibold tracking-[-0.03em] text-slate-50">MIDI</div>
@@ -1063,7 +1150,7 @@ export default function App() {
                   </div>
 
                   <div className="mt-4 grid gap-2.5">
-                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-slate-950/66 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-black/68 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">Port name</span>
                       <input
                         className={fieldClassName}
@@ -1073,7 +1160,7 @@ export default function App() {
                       />
                     </label>
 
-                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-slate-950/66 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-black/68 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">Channel</span>
                       <input
                         className={fieldClassName}
@@ -1086,7 +1173,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="min-w-0 rounded-[24px] border border-sky-400/18 bg-gradient-to-br from-sky-500/10 via-slate-950/92 to-slate-950/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="min-w-0 rounded-[24px] border border-sky-400/18 bg-gradient-to-br from-sky-500/10 via-black/92 to-black/98 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="text-base font-semibold tracking-[-0.03em] text-slate-50">OSC</div>
@@ -1099,7 +1186,7 @@ export default function App() {
                   </div>
 
                   <div className="mt-4 grid gap-2.5">
-                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-slate-950/66 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-black/68 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">Host</span>
                       <input
                         className={fieldClassName}
@@ -1109,7 +1196,7 @@ export default function App() {
                       />
                     </label>
 
-                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-slate-950/66 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <label className="grid gap-2 rounded-[18px] border border-white/10 bg-black/68 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">Port</span>
                       <input
                         className={fieldClassName}
@@ -1173,6 +1260,10 @@ export default function App() {
           </div>
         </SectionPanel>
       </main>
+
+      {showVisualizer && (
+        <KhorVisualizer apiBase={API_BASE} onClose={closeVisualizer} />
+      )}
     </div>
   )
 }
