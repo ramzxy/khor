@@ -155,6 +155,27 @@ static uint32_t osc_read_u32(const std::vector<uint8_t>& b, std::size_t* off) {
   return u;
 }
 
+TEST_CASE(signals_new_counters) {
+  khor::Signals s;
+  khor::Signals::Totals t0{};
+  khor::Signals::Totals t1{};
+  t1.tcp_retransmit_total = 5;
+  t1.irq_total = 10000;
+
+  s.update(t0, 1.0, 0.0, 0.0);
+  s.update(t1, 1.0, 0.0, 25.0); // 25% memory pressure
+
+  const auto r = s.rates();
+  CHECK(approx(r.retx_s, 5.0, 1e-6));
+  CHECK(approx(r.irq_s, 10000.0, 1e-6));
+  CHECK(approx(r.mem_pct, 25.0, 1e-6));
+
+  const auto v = s.value01();
+  CHECK(v.retx > 0.0 && v.retx <= 1.0);
+  CHECK(v.irq > 0.0 && v.irq <= 1.0);
+  CHECK(v.mem > 0.0 && v.mem <= 1.0);
+}
+
 TEST_CASE(osc_encoding_note) {
   khor::NoteEvent ev;
   ev.midi = 64;
