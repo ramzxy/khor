@@ -51,11 +51,18 @@ static int pick_note(int key_midi, const ScaleDef& sc, int degree, int octave) {
   return std::clamp(midi, 0, 127);
 }
 
-static void push_note(std::vector<NoteEvent>& out, int midi, float vel, float dur_s) {
+// MIDI channel convention for DAW routing.
+static constexpr int kChMelody = 1;
+static constexpr int kChBass   = 2;
+static constexpr int kChChords = 3;
+static constexpr int kChPerc   = 10;
+
+static void push_note(std::vector<NoteEvent>& out, int midi, float vel, float dur_s, int ch = 1) {
   NoteEvent ev;
   ev.midi = std::clamp(midi, 0, 127);
   ev.velocity = clamp01f(vel);
   ev.dur_s = std::max(0.02f, dur_s);
+  ev.channel = ch;
   out.push_back(ev);
 }
 
@@ -112,7 +119,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
       const int midi = pick_note(cfg.key_midi, sc, deg, oct);
       const float vel = (float)clamp01(0.12 + 0.70 * (0.65 * s.rx + 0.35 * s.tx));
       const float dur = (float)std::clamp(0.20 + 0.70 * (0.40 + 0.60 * s.rx) * (0.30 + 0.70 * dens), 0.10, 1.10);
-      push_note(out.notes, midi, vel, dur);
+      push_note(out.notes, midi, vel, dur, kChMelody);
     }
 
     // Exec accents: gentle dyads.
@@ -120,8 +127,8 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
     if (frand01(seed) < p_exec) {
       const int root = pick_note(cfg.key_midi, sc, 0, 1);
       const int fifth = pick_note(cfg.key_midi, sc, 2, 1); // in pentatonic this is close to a fifth-ish feel
-      push_note(out.notes, root, 0.42f, 0.35f);
-      push_note(out.notes, fifth, 0.30f, 0.35f);
+      push_note(out.notes, root, 0.42f, 0.35f, kChChords);
+      push_note(out.notes, fifth, 0.30f, 0.35f, kChChords);
     }
   } else if (cfg.preset == "percussive") {
     sp.cutoff01 = (float)clamp01(0.62 + 0.30 * s.io);
@@ -133,7 +140,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
       const double p_kick = dens * (0.05 + 0.95 * s.exec) * 0.65;
       if (frand01(seed) < p_kick) {
         const int midi = std::clamp(cfg.key_midi - 24, 0, 127);
-        push_note(out.notes, midi, (float)clamp01(0.35 + 0.55 * s.exec), 0.08f);
+        push_note(out.notes, midi, (float)clamp01(0.35 + 0.55 * s.exec), 0.08f, kChBass);
       }
     }
 
@@ -142,7 +149,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
     if (frand01(seed) < p_click) {
       const int deg = (int)(frand01(seed) * sc.count);
       const int midi = pick_note(cfg.key_midi, sc, deg, 3 + (step_ & 1)); // high
-      push_note(out.notes, midi, (float)clamp01(0.18 + 0.75 * s.csw), 0.05f);
+      push_note(out.notes, midi, (float)clamp01(0.18 + 0.75 * s.csw), 0.05f, kChPerc);
     }
 
     // Network adds mid hits.
@@ -150,7 +157,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
     if (frand01(seed) < p_mid) {
       const int deg = (int)(frand01(seed) * sc.count);
       const int midi = pick_note(cfg.key_midi, sc, deg, 2);
-      push_note(out.notes, midi, (float)clamp01(0.10 + 0.60 * (s.rx + s.tx) * 0.5), 0.07f);
+      push_note(out.notes, midi, (float)clamp01(0.10 + 0.60 * (s.rx + s.tx) * 0.5), 0.07f, kChPerc);
     }
   } else if (cfg.preset == "arp") {
     sp.reverb_mix01 = (float)clamp01(0.18 + 0.20 * s.rx);
@@ -163,7 +170,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
     if (gate > 0.05 && frand01(seed) < p_arp) {
       const int midi = pick_note(cfg.key_midi, sc, pdeg, 2 + ((step_ >> 2) & 1));
       const float vel = (float)clamp01(0.12 + 0.75 * gate);
-      push_note(out.notes, midi, vel, 0.12f);
+      push_note(out.notes, midi, vel, 0.12f, kChMelody);
     }
 
     // Exec adds chord stabs on bar start.
@@ -172,8 +179,8 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
       if (frand01(seed) < p_stab) {
         const int root = pick_note(cfg.key_midi, sc, 0, 1);
         const int up = pick_note(cfg.key_midi, sc, 2, 1);
-        push_note(out.notes, root, 0.45f, 0.20f);
-        push_note(out.notes, up, 0.30f, 0.20f);
+        push_note(out.notes, root, 0.45f, 0.20f, kChChords);
+        push_note(out.notes, up, 0.30f, 0.20f, kChChords);
       }
     }
   } else { // drone
@@ -185,11 +192,11 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
     // Sustain a low root by retriggering each bar.
     if (step_ == 0) {
       const int midi = std::clamp(cfg.key_midi - 24, 0, 127);
-      push_note(out.notes, midi, (float)clamp01(0.08 + 0.28 * s.io), 2.3f);
+      push_note(out.notes, midi, (float)clamp01(0.08 + 0.28 * s.io), 2.3f, kChBass);
     }
     if (step_ == 8 && activity > 0.10) {
       const int midi = std::clamp(cfg.key_midi - 12, 0, 127);
-      push_note(out.notes, midi, (float)clamp01(0.05 + 0.20 * activity), 1.6f);
+      push_note(out.notes, midi, (float)clamp01(0.05 + 0.20 * activity), 1.6f, kChBass);
     }
 
     // Network sprinkles.
@@ -197,7 +204,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
     if (frand01(seed) < p_top) {
       const int deg = (int)(frand01(seed) * sc.count);
       const int midi = pick_note(cfg.key_midi, sc, deg, 3);
-      push_note(out.notes, midi, (float)clamp01(0.05 + 0.35 * (s.rx + s.tx) * 0.5), 0.40f);
+      push_note(out.notes, midi, (float)clamp01(0.05 + 0.35 * (s.rx + s.tx) * 0.5), 0.40f, kChMelody);
     }
   }
 

@@ -85,6 +85,31 @@ TEST_CASE(music_silence_vs_drone) {
   for (const auto& n : d.notes) CHECK(n.midi >= 0 && n.midi <= 127);
 }
 
+TEST_CASE(music_channel_assignment) {
+  // Drone preset should produce bass notes on channel 2.
+  khor::MusicEngine eng;
+  khor::Signal01 active{};
+  active.exec = 0.5;
+  active.rx = 0.3;
+  active.io = 0.4;
+
+  khor::MusicConfig drone;
+  drone.preset = "drone";
+  drone.key_midi = 62;
+  drone.density = 0.5;
+  drone.scale = "pentatonic_minor";
+
+  auto frame = eng.tick(active, drone);
+  // Step 0 of drone always emits the low root on channel 2.
+  CHECK(!frame.notes.empty());
+  bool has_bass = false;
+  for (const auto& n : frame.notes) {
+    CHECK(n.channel >= 1 && n.channel <= 16);
+    if (n.channel == 2) has_bass = true;
+  }
+  CHECK(has_bass);
+}
+
 TEST_CASE(adsr_envelope) {
   khor::dsp::Adsr e;
   e.a_s = 0.01f;
