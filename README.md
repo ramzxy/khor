@@ -28,9 +28,11 @@
 
 Khor (kernel choir) turns system activity into music on **native Linux**:
 
-- eBPF collectors aggregate low-overhead system metrics across exec, network, scheduler, and block I/O activity
+- eBPF collectors aggregate low-overhead system metrics across exec, network, scheduler, block I/O, TCP retransmits, and hardware interrupts
+- `/proc/pressure/memory` (PSI) is polled for memory pressure — a slow-moving mood signal
 - a deterministic music engine maps those signals into notes, rhythm, and synth parameters
 - audio plays locally through miniaudio with PulseAudio, PipeWire, or ALSA
+- **multi-channel MIDI output** routes voice roles to separate channels for live DAW integration (melody Ch1, bass Ch2, chords Ch3, percussion Ch10)
 - optional outputs mirror the signal to **OSC (UDP)** and **MIDI (ALSA sequencer)**
 - a built-in web UI exposes status, charts, presets, and live controls
 
@@ -44,9 +46,9 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the detailed dataflow.
 
 ## Core Concepts
 
-1.  **eBPF Probes (The Ears)**: Traces `execve` (programs starting), `net_dev_queue` (network traffic), `sched_switch` (context switches), and `block_rq_issue` (disk I/O).
-2.  **Signal Pipeline (The Brain)**: Normalizes raw event counts into `0.0` to `1.0` control signals using logarithmic scaling and exponential smoothing.
-3.  **Music Engine (The Composer)**: A step sequencer that deterministically generates music based on these signals.
+1.  **eBPF Probes (The Ears)**: Traces `execve` (programs starting), `net_dev_queue`/`netif_receive_skb` (network traffic), `sched_switch` (context switches), `block_rq_issue`/`block_rq_complete` (disk I/O), `tcp_retransmit_skb` (network errors), and `irq_handler_entry` (hardware interrupts). Memory pressure is read from PSI (`/proc/pressure/memory`).
+2.  **Signal Pipeline (The Brain)**: Normalizes raw event counts into `0.0` to `1.0` control signals using logarithmic scaling and exponential smoothing. Each signal has tuned smoothing — TCP retransmits are kept spiky for percussive triggers, memory pressure is heavily smoothed as a slow mood signal.
+3.  **Music Engine (The Composer)**: A step sequencer that deterministically generates music based on these signals. Notes are tagged with MIDI channels per voice role (melody, bass, chords, percussion) for multi-track DAW routing.
 4.  **Audio Engine (The Voice)**: A custom polyphonic synthesizer (subtractive synthesis, ADSR, delay/reverb).
 
 ## High-Level Architecture
@@ -58,28 +60,38 @@ graph TD
         P_Net[Trace: Network]
         P_Sched[Trace: Sched]
         P_Block[Trace: Block I/O]
-        
+        P_TCP[Trace: TCP Retransmit]
+        P_IRQ[Trace: IRQ]
+
         P_Exec -->|Update| Map[Per-CPU Map Aggregation]
         P_Net -->|Update| Map
         P_Sched -->|Update| Map
         P_Block -->|Update| Map
-        
+        P_TCP -->|Update| Map
+        P_IRQ -->|Update| Map
+
         Map -->|Flush Periodically| RB[BPF Ring Buffer]
     end
 
     subgraph Userspace Daemon
+        PSI[/proc/pressure/memory]
         Collector[BPF Collector]
         Signal[Signal Normalizer]
         Music[Music Engine]
         Audio[Audio Engine]
+        MIDI[MIDI Out]
+        OSC[OSC Out]
         API[HTTP API]
-        
+
         RB -->|Read Events| Collector
         Collector -->|Raw Metrics| Signal
+        PSI -->|Memory Pressure| Signal
         Signal -->|Smooth 0..1 Signals| Music
-        Music -->|Note Events| Audio
+        Music -->|Ch1 Melody, Ch2 Bass, Ch3 Chords, Ch10 Perc| Audio
+        Music -->|Multi-Channel Notes| MIDI
+        Music -->|Notes + Signals| OSC
         Audio -->|Sound| Speakers[Speakers]
-        
+
         Signal -->|Metrics| API
         Music -->|State| API
     end
@@ -89,6 +101,19 @@ graph TD
         Browser -->|Poll/SSE| API
     end
 ```
+
+## Signals
+
+| Signal | Source | Musical Role |
+| --- | --- | --- |
+| `exec` | `sys_enter_execve` tracepoint | Note probability, accent chords, filter resonance |
+| `rx` | `netif_receive_skb` tracepoint | Reverb mix, melody gating |
+| `tx` | `net_dev_queue` tracepoint | Delay mix, arpeggio gating |
+| `csw` | `sched_switch` tracepoint | Percussive click probability |
+| `io` | `block_rq_complete` tracepoint | Filter cutoff (80Hz–9kHz) |
+| `retx` | `tcp_retransmit_skb` tracepoint | Chromatic glitch stabs (deliberately off-scale) |
+| `irq` | `irq_handler_entry` tracepoint | Ultra-short hi-hat texture in high octaves |
+| `mem` | `/proc/pressure/memory` PSI | Mood — darkens filter, increases reverb, adds resonance strain |
 
 ## Quick Start (From Source)
 
@@ -293,6 +318,30 @@ Then connect the virtual port to a synth:
 aconnect -l
 ```
 
+### Multi-Channel Routing
+
+Notes are tagged with MIDI channels by voice role so DAWs can route them to separate instruments:
+
+| Channel | Role | Example VST |
+| --- | --- | --- |
+| 1 | Melody | Pad, lead synth |
+| 2 | Bass | Sub bass, 808 |
+| 3 | Chords/Pads | Strings, pad |
+| 10 | Percussion | Drum kit, glitch FX |
+
+In your DAW, create four tracks each receiving from the "khor" MIDI port on the corresponding channel, assign a different VST instrument to each, and you have live kernel-driven multi-instrument music.
+
+Control signals are also sent as MIDI CC on channel 1:
+
+| CC | Signal |
+| --- | --- |
+| 20 | exec (process activity) |
+| 21 | rx (network receive) |
+| 22 | tx (network transmit) |
+| 23 | csw (context switches) |
+| 24 | io (block I/O) |
+| 74 | filter cutoff |
+
 ## OSC (Optional)
 
 Enable OSC:
@@ -305,9 +354,9 @@ Default target is `127.0.0.1:9000` (configurable).
 
 Messages:
 
-- `/khor/note` `(int midi, float vel, float dur)`
-- `/khor/signal` `(string name, float value01)`
-- `/khor/metrics` `(float exec_s, float rx_kbs, float tx_kbs, float csw_s, float blk_r_kbs, float blk_w_kbs)`
+- `/khor/note` `(int channel, int midi, float vel, float dur)`
+- `/khor/signal` `(string name, float value01)` — names: `exec`, `rx`, `tx`, `csw`, `io`, `retx`, `irq`, `mem`
+- `/khor/metrics` `(float exec_s, float rx_kbs, float tx_kbs, float csw_s, float blk_r_kbs, float blk_w_kbs, float retx_s, float irq_s, float mem_pct)`
 
 ## Tests
 
