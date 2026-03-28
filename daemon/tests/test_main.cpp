@@ -160,6 +160,7 @@ TEST_CASE(osc_encoding_note) {
   ev.midi = 64;
   ev.velocity = 0.5f;
   ev.dur_s = 0.25f;
+  ev.channel = 10;
 
   const auto msg = khor::osc::encode_note(ev);
   CHECK((msg.size() & 3u) == 0u);
@@ -168,8 +169,10 @@ TEST_CASE(osc_encoding_note) {
   const std::string addr = osc_read_str(msg, &off);
   const std::string tt = osc_read_str(msg, &off);
   CHECK(addr == "/khor/note");
-  CHECK(tt == ",iff");
+  CHECK(tt == ",iiff");
 
+  const uint32_t ch = osc_read_u32(msg, &off);
+  CHECK(ch == 10u);
   const uint32_t midi = osc_read_u32(msg, &off);
   CHECK(midi == 64u);
 }

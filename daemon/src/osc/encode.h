@@ -44,7 +44,8 @@ inline std::vector<uint8_t> encode_note(const NoteEvent& ev) {
   std::vector<uint8_t> b;
   b.reserve(64);
   put_str(b, "/khor/note");
-  put_str(b, ",iff");
+  put_str(b, ",iiff");
+  put_i32(b, (int32_t)std::clamp(ev.channel, 1, 16));
   put_i32(b, (int32_t)std::clamp(ev.midi, 0, 127));
   put_f32(b, std::clamp(ev.velocity, 0.0f, 1.0f));
   put_f32(b, std::max(0.0f, ev.dur_s));
