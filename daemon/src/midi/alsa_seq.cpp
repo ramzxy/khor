@@ -18,15 +18,20 @@ struct MidiOut::Impl {
 #if defined(KHOR_HAS_ALSA_SEQ)
   snd_seq_t* seq = nullptr;
   int port = -1;
-  int channel = 0;
   std::string port_name;
 
   std::atomic<bool> running{false};
   std::thread worker;
 
+  struct NoteKey {
+    int channel;
+    int midi;
+    bool operator==(const NoteKey& o) const { return channel == o.channel && midi == o.midi; }
+  };
+
   struct PendingOff {
     std::chrono::steady_clock::time_point due;
-    int midi = 0;
+    NoteKey key;
   };
   std::mutex mu;
   std::vector<PendingOff> offs;
@@ -43,27 +48,27 @@ struct MidiOut::Impl {
     (void)snd_seq_event_output_direct(seq, const_cast<snd_seq_event_t*>(ev));
   }
 
-  void send_note_on(int midi, int vel) {
+  void send_note_on(int ch, int midi, int vel) {
     snd_seq_event_t ev{};
     snd_seq_ev_clear(&ev);
     snd_seq_ev_set_source(&ev, port);
     snd_seq_ev_set_subs(&ev);
     snd_seq_ev_set_direct(&ev);
-    snd_seq_ev_set_noteon(&ev, channel, midi, vel);
+    snd_seq_ev_set_noteon(&ev, ch, midi, vel);
     send_event(&ev);
   }
 
-  void send_note_off(int midi) {
+  void send_note_off(int ch, int midi) {
     snd_seq_event_t ev{};
     snd_seq_ev_clear(&ev);
     snd_seq_ev_set_source(&ev, port);
     snd_seq_ev_set_subs(&ev);
     snd_seq_ev_set_direct(&ev);
-    snd_seq_ev_set_noteoff(&ev, channel, midi, 0);
+    snd_seq_ev_set_noteoff(&ev, ch, midi, 0);
     send_event(&ev);
   }
 
-  void send_cc(int cc, int value) {
+  void send_cc(int ch, int cc, int value) {
     cc = std::clamp(cc, 0, 127);
     value = std::clamp(value, 0, 127);
     snd_seq_event_t ev{};
@@ -71,13 +76,13 @@ struct MidiOut::Impl {
     snd_seq_ev_set_source(&ev, port);
     snd_seq_ev_set_subs(&ev);
     snd_seq_ev_set_direct(&ev);
-    snd_seq_ev_set_controller(&ev, channel, cc, value);
+    snd_seq_ev_set_controller(&ev, ch, cc, value);
     send_event(&ev);
   }
 
   void loop() {
     while (running.load(std::memory_order_relaxed)) {
-      std::vector<int> due_notes;
+      std::vector<NoteKey> due_notes;
       auto now = std::chrono::steady_clock::now();
 
       {
@@ -85,7 +90,7 @@ struct MidiOut::Impl {
         auto it = offs.begin();
         while (it != offs.end()) {
           if (it->due <= now) {
-            due_notes.push_back(it->midi);
+            due_notes.push_back(it->key);
             it = offs.erase(it);
           } else {
             ++it;
@@ -93,7 +98,7 @@ struct MidiOut::Impl {
         }
       }
 
-      for (int n : due_notes) send_note_off(n);
+      for (const auto& k : due_notes) send_note_off(k.channel, k.midi);
 
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -116,8 +121,7 @@ bool MidiOut::start(const std::string& port_name, int channel_1_16, std::string*
 #else
   stop();
 
-  channel_1_16 = std::clamp(channel_1_16, 1, 16);
-  impl_->channel = channel_1_16 - 1;
+  (void)channel_1_16; // channel now per-note, not global
   impl_->port_name = port_name.empty() ? "khor" : port_name;
 
   if (snd_seq_open(&impl_->seq, "default", SND_SEQ_OPEN_OUTPUT, 0) < 0 || !impl_->seq) {
@@ -169,15 +173,16 @@ bool MidiOut::is_running() const {
 void MidiOut::send_note(const NoteEvent& ev) {
   if (!impl_ || !is_running()) return;
 #if defined(KHOR_HAS_ALSA_SEQ)
+  const int ch = std::clamp(ev.channel, 1, 16) - 1; // MIDI 0-indexed
   const int midi = std::clamp(ev.midi, 0, 127);
   const int vel = Impl::vel_0_127(ev.velocity);
-  impl_->send_note_on(midi, vel);
+  impl_->send_note_on(ch, midi, vel);
 
   const float dur = std::max(0.02f, ev.dur_s);
   const auto due = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<float>(dur));
   {
     std::scoped_lock lk(impl_->mu);
-    impl_->offs.push_back(Impl::PendingOff{.due = due, .midi = midi});
+    impl_->offs.push_back(Impl::PendingOff{.due = due, .key = {.channel = ch, .midi = midi}});
   }
 #else
   (void)ev;
@@ -194,12 +199,12 @@ void MidiOut::send_signals_cc(const Signal01& s, float cutoff01) {
   }
   impl_->last_cc = now;
 
-  impl_->send_cc(20, Impl::vel_0_127((float)s.exec));
-  impl_->send_cc(21, Impl::vel_0_127((float)s.rx));
-  impl_->send_cc(22, Impl::vel_0_127((float)s.tx));
-  impl_->send_cc(23, Impl::vel_0_127((float)s.csw));
-  impl_->send_cc(24, Impl::vel_0_127((float)s.io));
-  impl_->send_cc(74, Impl::vel_0_127(cutoff01));
+  impl_->send_cc(0, 20, Impl::vel_0_127((float)s.exec));
+  impl_->send_cc(0, 21, Impl::vel_0_127((float)s.rx));
+  impl_->send_cc(0, 22, Impl::vel_0_127((float)s.tx));
+  impl_->send_cc(0, 23, Impl::vel_0_127((float)s.csw));
+  impl_->send_cc(0, 24, Impl::vel_0_127((float)s.io));
+  impl_->send_cc(0, 74, Impl::vel_0_127(cutoff01));
 #else
   (void)s;
   (void)cutoff01;
