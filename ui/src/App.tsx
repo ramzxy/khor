@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, lazy, Suspense } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { cn } from './lib/cn'
-import { KhorVisualizer } from './components/visualizer/KhorVisualizer'
+
+const KhorVisualizer = lazy(() => import('./components/visualizer/KhorVisualizer').then(m => ({ default: m.KhorVisualizer })))
 
 type ApiHealth = {
   ts_ms: number
@@ -1262,7 +1263,9 @@ export default function App() {
       </main>
 
       {showVisualizer && (
-        <KhorVisualizer apiBase={API_BASE} onClose={closeVisualizer} />
+        <Suspense fallback={null}>
+          <KhorVisualizer apiBase={API_BASE} onClose={closeVisualizer} />
+        </Suspense>
       )}
     </div>
   )

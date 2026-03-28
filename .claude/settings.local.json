@@ -6,7 +6,15 @@
       "Bash(git commit:*)",
       "Bash(./scripts/linux-build.sh)",
       "Bash(./daemon/build/khor-tests)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(chmod +x scripts/demo-*.sh)",
+      "Bash(npx tsc:*)",
+      "Bash(systemctl --user stop khor.service)",
+      "Bash(pkill -f khor-daemon)",
+      "Bash(npx vite:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npm --prefix ui run build)"
     ]
   }
 }

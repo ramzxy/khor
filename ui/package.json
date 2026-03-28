@@ -11,10 +11,12 @@
   },
   "dependencies": {
     "@fontsource/space-grotesk": "^5.2.10",
+    "@types/three": "^0.183.1",
     "clsx": "^2.1.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "tailwind-merge": "^3.4.1"
+    "tailwind-merge": "^3.4.1",
+    "three": "^0.183.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
