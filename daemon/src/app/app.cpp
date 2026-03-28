@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "util/paths.h"
 
@@ -20,6 +21,22 @@ static JsonValue json_error(const std::string& msg) {
     {"ok", JsonValue::make_bool(false)},
     {"error", JsonValue::make_string(msg)},
   });
+}
+
+static double read_psi_memory_some_avg10() {
+  FILE* f = std::fopen("/proc/pressure/memory", "r");
+  if (!f) return 0.0;
+  char line[256];
+  double avg10 = 0.0;
+  while (std::fgets(line, sizeof(line), f)) {
+    if (std::strncmp(line, "some ", 5) == 0) {
+      const char* p = std::strstr(line, "avg10=");
+      if (p) avg10 = std::strtod(p + 6, nullptr);
+      break;
+    }
+  }
+  std::fclose(f);
+  return std::clamp(avg10, 0.0, 100.0);
 }
 
 } // namespace
@@ -220,6 +237,8 @@ void App::stop() {
 void App::sampler_loop() {
   using clock = std::chrono::steady_clock;
   auto last_t = clock::now();
+  int psi_tick = 0;
+  double mem_psi = 0.0;
 
   while (!stop_.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -235,12 +254,20 @@ void App::sampler_loop() {
     t.sched_switch_total = metrics_.sched_switch_total.load(std::memory_order_relaxed);
     t.blk_read_bytes_total = metrics_.blk_read_bytes_total.load(std::memory_order_relaxed);
     t.blk_write_bytes_total = metrics_.blk_write_bytes_total.load(std::memory_order_relaxed);
+    t.tcp_retransmit_total = metrics_.tcp_retransmit_total.load(std::memory_order_relaxed);
+    t.irq_total = metrics_.irq_total.load(std::memory_order_relaxed);
 
     const double smoothing = std::clamp(smoothing_.load(std::memory_order_relaxed), 0.0, 1.0);
 
+    if (++psi_tick >= 10) {
+      psi_tick = 0;
+      mem_psi = read_psi_memory_some_avg10();
+      metrics_.mem_pressure_pct.store(mem_psi, std::memory_order_relaxed);
+    }
+
     {
       std::scoped_lock lk(sig_mu_);
-      signals_.update(t, dt_s, smoothing);
+      signals_.update(t, dt_s, smoothing, mem_psi);
       last_rates_ = signals_.rates();
       last_v01_ = signals_.value01();
     }
@@ -332,6 +359,9 @@ void App::fake_loop() {
     metrics_.sched_switch_total.fetch_add(5 + (std::rand() % 200), std::memory_order_relaxed);
     metrics_.blk_read_bytes_total.fetch_add(4096 * (std::rand() % 8), std::memory_order_relaxed);
     metrics_.blk_write_bytes_total.fetch_add(4096 * (std::rand() % 6), std::memory_order_relaxed);
+    metrics_.tcp_retransmit_total.fetch_add(std::rand() % 3, std::memory_order_relaxed);
+    metrics_.irq_total.fetch_add(500 + (std::rand() % 5000), std::memory_order_relaxed);
+    metrics_.mem_pressure_pct.store((double)(std::rand() % 30), std::memory_order_relaxed);
   }
 }
 
