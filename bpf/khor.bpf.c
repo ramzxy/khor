@@ -39,7 +39,7 @@ static __always_inline struct khor_bpf_config* get_cfg(void) {
 }
 
 static __always_inline __u32 cfg_enabled_mask(const struct khor_bpf_config* cfg) {
-  const __u32 all = (KHOR_PROBE_EXEC | KHOR_PROBE_NET | KHOR_PROBE_SCHED | KHOR_PROBE_BLOCK);
+  const __u32 all = (KHOR_PROBE_EXEC | KHOR_PROBE_NET | KHOR_PROBE_SCHED | KHOR_PROBE_BLOCK | KHOR_PROBE_TCP | KHOR_PROBE_IRQ);
   if (!cfg) return all;
   return cfg->enabled_mask ? cfg->enabled_mask : all;
 }
@@ -103,7 +103,8 @@ static __always_inline void maybe_flush(struct khor_counters* c, const struct kh
   if (now - c->last_flush_ns < interval_ns) return;
 
   if (c->acc.exec_count || c->acc.net_rx_bytes || c->acc.net_tx_bytes || c->acc.sched_switches ||
-      c->acc.blk_read_bytes || c->acc.blk_write_bytes || c->acc.blk_issue_count || c->acc.lost_events) {
+      c->acc.blk_read_bytes || c->acc.blk_write_bytes || c->acc.blk_issue_count || c->acc.lost_events ||
+      c->acc.tcp_retransmits || c->acc.irq_count) {
     emit_sample(c, cfg, now);
   }
 
@@ -114,6 +115,8 @@ static __always_inline void maybe_flush(struct khor_counters* c, const struct kh
   c->acc.blk_read_bytes = 0;
   c->acc.blk_write_bytes = 0;
   c->acc.blk_issue_count = 0;
+  c->acc.tcp_retransmits = 0;
+  c->acc.irq_count = 0;
   c->acc.lost_events = 0;
   c->last_flush_ns = now;
 }
@@ -223,6 +226,36 @@ int tp_block_rq_complete(struct trace_event_raw_block_rq_completion* ctx) {
     c->acc.blk_write_bytes += bytes;
   }
 
+  maybe_flush(c, cfg, bpf_ktime_get_ns());
+  return 0;
+}
+
+SEC("tracepoint/tcp/tcp_retransmit_skb")
+int tp_tcp_retransmit(struct trace_event_raw_tcp_retransmit_skb* ctx) {
+  (void)ctx;
+  const struct khor_bpf_config* cfg = get_cfg();
+  if (!pass_filters(cfg)) return 0;
+  if (!(cfg_enabled_mask(cfg) & KHOR_PROBE_TCP)) return 0;
+
+  struct khor_counters* c = get_counters();
+  if (!c) return 0;
+
+  c->acc.tcp_retransmits++;
+  maybe_flush(c, cfg, bpf_ktime_get_ns());
+  return 0;
+}
+
+SEC("tracepoint/irq/irq_handler_entry")
+int tp_irq_entry(struct trace_event_raw_irq_handler_entry* ctx) {
+  (void)ctx;
+  const struct khor_bpf_config* cfg = get_cfg();
+  if (!(cfg_enabled_mask(cfg) & KHOR_PROBE_IRQ)) return 0;
+  // Skip pass_filters for IRQs — they aren't process-scoped.
+
+  struct khor_counters* c = get_counters();
+  if (!c) return 0;
+
+  c->acc.irq_count++;
   maybe_flush(c, cfg, bpf_ktime_get_ns());
   return 0;
 }
