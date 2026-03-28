@@ -342,6 +342,9 @@ void App::music_loop() {
         osc_.send_signal("tx", (float)s01.tx);
         osc_.send_signal("csw", (float)s01.csw);
         osc_.send_signal("io", (float)s01.io);
+        osc_.send_signal("retx", (float)s01.retx);
+        osc_.send_signal("irq", (float)s01.irq);
+        osc_.send_signal("mem", (float)s01.mem);
       }
       if ((osc_metrics_tick++ & 7u) == 0u) {
         osc_.send_metrics(rates);
@@ -439,6 +442,8 @@ JsonValue App::api_metrics(bool include_history) const {
     {"sched_switch_total", JsonValue::make_number((double)metrics_.sched_switch_total.load(std::memory_order_relaxed))},
     {"blk_read_bytes_total", JsonValue::make_number((double)metrics_.blk_read_bytes_total.load(std::memory_order_relaxed))},
     {"blk_write_bytes_total", JsonValue::make_number((double)metrics_.blk_write_bytes_total.load(std::memory_order_relaxed))},
+    {"tcp_retransmit_total", JsonValue::make_number((double)metrics_.tcp_retransmit_total.load(std::memory_order_relaxed))},
+    {"irq_total", JsonValue::make_number((double)metrics_.irq_total.load(std::memory_order_relaxed))},
   });
 
   SignalRates r{};
@@ -453,6 +458,9 @@ JsonValue App::api_metrics(bool include_history) const {
     {"csw_s", JsonValue::make_number(r.csw_s)},
     {"blk_r_kbs", JsonValue::make_number(r.blk_r_kbs)},
     {"blk_w_kbs", JsonValue::make_number(r.blk_w_kbs)},
+    {"retx_s", JsonValue::make_number(r.retx_s)},
+    {"irq_s", JsonValue::make_number(r.irq_s)},
+    {"mem_pct", JsonValue::make_number(r.mem_pct)},
   });
 
   root.o["controls"] = JsonValue::make_object({

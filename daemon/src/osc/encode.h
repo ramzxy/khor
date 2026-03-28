@@ -64,15 +64,18 @@ inline std::vector<uint8_t> encode_signal(const char* name, float v01) {
 
 inline std::vector<uint8_t> encode_metrics(const SignalRates& r) {
   std::vector<uint8_t> b;
-  b.reserve(128);
+  b.reserve(160);
   put_str(b, "/khor/metrics");
-  put_str(b, ",ffffff");
+  put_str(b, ",fffffffff");
   put_f32(b, (float)r.exec_s);
   put_f32(b, (float)r.rx_kbs);
   put_f32(b, (float)r.tx_kbs);
   put_f32(b, (float)r.csw_s);
   put_f32(b, (float)r.blk_r_kbs);
   put_f32(b, (float)r.blk_w_kbs);
+  put_f32(b, (float)r.retx_s);
+  put_f32(b, (float)r.irq_s);
+  put_f32(b, (float)r.mem_pct);
   return b;
 }
 
