@@ -176,6 +176,29 @@ TEST_CASE(signals_new_counters) {
   CHECK(v.mem > 0.0 && v.mem <= 1.0);
 }
 
+TEST_CASE(music_retransmit_glitch) {
+  // High retx signal should sometimes produce notes even in ambient with low density.
+  khor::MusicEngine eng;
+  khor::Signal01 s{};
+  s.retx = 0.9; // heavy retransmit spike
+  s.exec = 0.1; // minimal other activity
+
+  khor::MusicConfig cfg;
+  cfg.preset = "ambient";
+  cfg.key_midi = 62;
+  cfg.density = 0.5;
+  cfg.scale = "pentatonic_minor";
+
+  // Run 16 steps (one bar), count notes.
+  int note_count = 0;
+  for (int i = 0; i < 16; i++) {
+    auto frame = eng.tick(s, cfg);
+    note_count += (int)frame.notes.size();
+  }
+  // With retx=0.9 and density=0.5, we should get at least a few glitch notes.
+  CHECK(note_count > 0);
+}
+
 TEST_CASE(osc_encoding_note) {
   khor::NoteEvent ev;
   ev.midi = 64;

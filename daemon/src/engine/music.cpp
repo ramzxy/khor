@@ -77,15 +77,15 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
   cfg.key_midi = std::clamp(cfg.key_midi, 0, 127);
 
   const ScaleDef sc = scale_from_string(cfg.scale);
-  const double activity = std::max({s.exec, s.rx, s.tx, s.csw, s.io});
+  const double activity = std::max({s.exec, s.rx, s.tx, s.csw, s.io, s.retx, s.irq});
 
   MusicFrame out;
   out.notes.reserve(8);
 
   // Synth params: map IO to cutoff; map exec to resonance; presets adjust FX.
   SynthParams sp;
-  sp.cutoff01 = (float)clamp01(0.30 + 0.60 * s.io + 0.15 * (s.rx + s.tx) * 0.5);
-  sp.resonance01 = (float)clamp01(0.18 + 0.55 * s.exec);
+  sp.cutoff01 = (float)clamp01(0.30 + 0.60 * s.io + 0.15 * (s.rx + s.tx) * 0.5 - 0.20 * s.mem);
+  sp.resonance01 = (float)clamp01(0.18 + 0.55 * s.exec + 0.15 * s.mem);
 
   const bool silent_by_default = (cfg.preset != "drone");
   if (silent_by_default && activity < 0.03) {
@@ -109,7 +109,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
   const double dens = cfg.density;
 
   if (cfg.preset == "ambient") {
-    sp.reverb_mix01 = (float)clamp01(0.38 + 0.35 * s.rx);
+    sp.reverb_mix01 = (float)clamp01(0.38 + 0.35 * s.rx + 0.15 * s.mem);
     sp.delay_mix01 = (float)clamp01(0.10 + 0.22 * s.tx);
 
     const double p_note = dens * (0.12 + 0.88 * activity) * 0.35;
@@ -184,7 +184,7 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
       }
     }
   } else { // drone
-    sp.reverb_mix01 = (float)clamp01(0.45 + 0.25 * s.rx);
+    sp.reverb_mix01 = (float)clamp01(0.45 + 0.25 * s.rx + 0.12 * s.mem);
     sp.delay_mix01 = (float)clamp01(0.05 + 0.10 * s.tx);
     sp.cutoff01 = (float)clamp01(0.18 + 0.78 * s.io);
     sp.resonance01 = (float)clamp01(0.30 + 0.55 * s.exec);
@@ -205,6 +205,27 @@ MusicFrame MusicEngine::tick(const Signal01& s_in, const MusicConfig& cfg_in) {
       const int deg = (int)(frand01(seed) * sc.count);
       const int midi = pick_note(cfg.key_midi, sc, deg, 3);
       push_note(out.notes, midi, (float)clamp01(0.05 + 0.35 * (s.rx + s.tx) * 0.5), 0.40f, kChMelody);
+    }
+  }
+
+  // TCP retransmit glitch: chromatic stab outside the scale.
+  if (s.retx > 0.08) {
+    const double p_glitch = dens * s.retx * 0.6;
+    if (frand01(seed) < p_glitch) {
+      int semi = (int)(frand01(seed) * 12.0);
+      int oct = 2 + (int)(frand01(seed) * 2.0);
+      int midi = std::clamp(cfg.key_midi + semi + oct * 12, 0, 127);
+      push_note(out.notes, midi, (float)clamp01(0.25 + 0.60 * s.retx), 0.06f, kChPerc);
+    }
+  }
+
+  // IRQ texture: very short hi-hat-like notes in high register.
+  if (s.irq > 0.10) {
+    const double p_tick = dens * s.irq * 0.40;
+    if (frand01(seed) < p_tick) {
+      int deg = (int)(frand01(seed) * sc.count);
+      int midi = pick_note(cfg.key_midi, sc, deg, 4 + (step_ & 1));
+      push_note(out.notes, midi, (float)clamp01(0.06 + 0.18 * s.irq), 0.02f, kChPerc);
     }
   }
 
