@@ -169,6 +169,8 @@ bool BpfCollector::start(const BpfConfig& cfg, KhorMetrics* metrics, std::string
       m->sched_switch_total.fetch_add(e->u.sample.sched_switches, std::memory_order_relaxed);
       m->blk_read_bytes_total.fetch_add(e->u.sample.blk_read_bytes, std::memory_order_relaxed);
       m->blk_write_bytes_total.fetch_add(e->u.sample.blk_write_bytes, std::memory_order_relaxed);
+      m->tcp_retransmit_total.fetch_add(e->u.sample.tcp_retransmits, std::memory_order_relaxed);
+      m->irq_total.fetch_add(e->u.sample.irq_count, std::memory_order_relaxed);
       m->events_dropped.fetch_add(e->u.sample.lost_events, std::memory_order_relaxed);
     }
     return 0;
