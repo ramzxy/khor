@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(./scripts/linux-build.sh)",
+      "Bash(./daemon/build/khor-tests)",
+      "Bash(git merge:*)"
+    ]
+  }
+}
